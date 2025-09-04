@@ -5,17 +5,17 @@
       "Application": "Pcbnew",
       "Version": "9.0.0"
     },
-    "CreationDate": "2025-08-20T16:33:56-07:00"
+    "CreationDate": "2025-09-03T15:15:46-07:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
-      "Name": "flatchord",
-      "GUID": "666c6174-6368-46f7-9264-2e6b69636164",
+      "Name": "grippy",
+      "GUID": "67726970-7079-42e6-9b69-6361645f7063",
       "Revision": "rev?"
     },
     "Size": {
-      "X": 57.7287,
-      "Y": 36.0287
+      "X": 66.1,
+      "Y": 35.4074
     },
     "LayerNumber": 2,
     "BoardThickness": 1.6,
@@ -34,47 +34,47 @@
   ],
   "FilesAttributes": [
     {
-      "Path": "flatchord-F_Cu.gbr",
+      "Path": "grippy-F_Cu.gbr",
       "FileFunction": "Copper,L1,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "flatchord-B_Cu.gbr",
+      "Path": "grippy-B_Cu.gbr",
       "FileFunction": "Copper,L2,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "flatchord-F_Paste.gbr",
+      "Path": "grippy-F_Paste.gbr",
       "FileFunction": "SolderPaste,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "flatchord-B_Paste.gbr",
+      "Path": "grippy-B_Paste.gbr",
       "FileFunction": "SolderPaste,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "flatchord-F_Silkscreen.gbr",
+      "Path": "grippy-F_Silkscreen.gbr",
       "FileFunction": "Legend,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "flatchord-B_Silkscreen.gbr",
+      "Path": "grippy-B_Silkscreen.gbr",
       "FileFunction": "Legend,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "flatchord-F_Mask.gbr",
+      "Path": "grippy-F_Mask.gbr",
       "FileFunction": "SolderMask,Top",
       "FilePolarity": "Negative"
     },
     {
-      "Path": "flatchord-B_Mask.gbr",
+      "Path": "grippy-B_Mask.gbr",
       "FileFunction": "SolderMask,Bot",
       "FilePolarity": "Negative"
     },
     {
-      "Path": "flatchord-Edge_Cuts.gbr",
+      "Path": "grippy-Edge_Cuts.gbr",
       "FileFunction": "Profile",
       "FilePolarity": "Positive"
     }
