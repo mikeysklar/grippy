@@ -131,25 +131,31 @@ entry_idx    = 0
 entry_offset = 0  # kept for future per-entry scrolling (10-char steps)
 typing_offset = 0
 
-
 # ─── Mouse chords for layer-7 ────────────────────────────────────────
 MOVE_DELTA = 5
 ACCEL_MULTIPLIER = 2
 ACCEL_CHORD = (1, 2, 3)
 
+# ─── Text window geometry for ST7789 ─────────────────────────────────
+COLS = 13          # chars per line
+ROWS = 5           # lines on screen
+WINDOW_SIZE = COLS * ROWS  # 65 chars
+
+def _format_window(s: str) -> str:
+    """Pad to window size and break into ROWS lines of COLS chars."""
+    s = s + " " * max(0, WINDOW_SIZE - len(s))
+    return "\n".join(s[i:i+COLS] for i in range(0, WINDOW_SIZE, COLS))
+
 # ─── edit view ──────────────────────────────────────────────
 def render_typing_window():
-    """Render the last 20 chars of text_buffer starting at typing_offset."""
+    """Render a COLS×ROWS window of text_buffer starting at typing_offset."""
     global text_buffer, text_label, typing_offset
-    visible_window = 20
     # Clamp offset in case buffer shrank
-    typing_offset = max(0, min(typing_offset, max(0, len(text_buffer) - visible_window)))
+    typing_offset = max(0, min(typing_offset, max(0, len(text_buffer) - WINDOW_SIZE)))
     start = typing_offset
-    end   = typing_offset + visible_window
+    end   = typing_offset + WINDOW_SIZE
     window = text_buffer[start:end]
-    # Pad to exactly 20 chars so both lines draw every time
-    window = window + " " * (visible_window - len(window))
-    text_label.text = window[:10] + "\n" + window[10:]
+    text_label.text = _format_window(window)
 
 # ─── Save-to-file config ──────────────────────────────────────────────
 SAVE_PATH = "/notes.txt"
@@ -255,16 +261,18 @@ def load_entries():
     entry_offset = 0
 
 def render_entry_window():
-    """Show current entry in a fixed 2×10 window starting at entry_offset."""
+    """Show current entry in a fixed COLS×ROWS window starting at entry_offset."""
     global text_label
     if not entries:
         text_label.text = "(no notes)"
         return
     s = entries[entry_idx]
-    start = max(0, min(entry_offset, max(0, len(s) - 20)))
-    window = s[start:start+20]
-    window += " " * (20 - len(window))
-    text_label.text = window[:10] + "\n" + window[10:]
+    # Clamp offset
+    max_off = max(0, len(s) - WINDOW_SIZE)
+    start = max(0, min(entry_offset, max_off))
+    window = s[start:start+WINDOW_SIZE]
+    text_label.text = _format_window(window)
+
 
 def enter_viewer():
     """Clear screen, load entries, show first entry."""
@@ -289,17 +297,17 @@ def handle_page_nav(kc):
     render_entry_window()
 
 def handle_intra_scroll(kc):
-    """Scroll inside the current entry by 10-char lines; clamp to bounds."""
+    """Scroll inside the current entry by one line (COLS chars)."""
     global entry_offset
     if not entries:
         render_entry_window()
         return
     s = entries[entry_idx]
-    max_off = max(0, len(s) - 20)  # 2 lines × 10 chars visible = 20 window
+    max_off = max(0, len(s) - WINDOW_SIZE)
     if kc == KC_UP:
-        entry_offset = max(0, entry_offset - 10)
+        entry_offset = max(0, entry_offset - COLS)
     elif kc == KC_DOWN:
-        entry_offset = min(max_off, entry_offset + 10)
+        entry_offset = min(max_off, entry_offset + COLS)
     render_entry_window()
 
 # ─── Core chord logic ────────────────────────────────────────────────
@@ -457,7 +465,7 @@ def check_chords():
                 skip_scag       = False
 
             elif layer in (1, 2, 3, 6, 7):
-                # Skip HID toggle chord (layer‑3, (0,1,2,3,4))
+                # Skip HID toggle chord (layer-3, (0,1,2,3,4))
                 if use != (4,) and not (layer == 3 and use == (0,1,2,3,4)):
                     kc = lm.get(use)
                     if kc:
@@ -467,28 +475,26 @@ def check_chords():
 
                         if kc == 61:  # handled above
                             pass
-                        # ── Backspace Logic ─────────────────────
+
                         elif kc == 42:  # Backspace
                             if text_buffer:
                                 text_buffer = text_buffer[:-1]
                                 # If we deleted back past the current window, pull it up by one line
                                 if typing_offset > 0 and len(text_buffer) <= typing_offset:
-                                    typing_offset = max(0, typing_offset - 10)
+                                    typing_offset = max(0, typing_offset - COLS)
                             render_typing_window()
-                        # ── Save on INSERT ─────────────────────
+
                         elif kc == INSERT_CODE:
                             save_entry()
-                            # Optional: brief debounce so you don't double-save
                             time.sleep(0.15)
-                        # ── VIEW: enter + wrap-around paging ─────────
+
                         elif kc in (KC_PAGE_UP, KC_PAGE_DOWN):
                             if not viewer_mode:
                                 enter_viewer()          # clears screen, loads first entry
                             else:
                                 handle_page_nav(kc)     # wrap-around prev/next
-                            # (Optional) small debounce
                             time.sleep(0.12)
-                        # ── VIEW: intra-entry scroll (UP/DOWN) ───────
+
                         elif kc in (KC_UP, KC_DOWN):
                             if not viewer_mode:
                                 enter_viewer()
@@ -506,14 +512,14 @@ def check_chords():
                             elif kc == 44:           # Space
                                 char = " "
                             else:
-                                char = "?"           # <-- here
+                                char = "?"           # fallback
 
                             # 2. Append the character
                             text_buffer += char
 
-                            # 3. If we overflow the 2×10 window, scroll down one line (10 chars)
-                            if len(text_buffer) > typing_offset + 20:
-                                typing_offset += 10
+                            # 3. If we overflow the COLS×ROWS window, scroll down one line (COLS chars)
+                            if len(text_buffer) > typing_offset + WINDOW_SIZE:
+                                typing_offset += COLS
 
                             # 4. Render the current typing window
                             render_typing_window()
