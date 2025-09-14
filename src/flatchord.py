@@ -26,7 +26,7 @@ display_bus = FourWire(
     command=board.IO11,        # D/C
     chip_select=board.IO12,    # CS
     reset=board.IO10,          # RST
-    baudrate=32_000_000
+    baudrate=60_000_000
 )
 
 # --- ST7789 panel (280x240 variant) ---
