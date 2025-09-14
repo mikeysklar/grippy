@@ -108,9 +108,9 @@ def disable_hid():
     print("USB HID disabled")
 
 # ─── Timing constants ────────────────────────────────────────────────
-STABLE_MS_ALPHA = 0.03
-STABLE_MS_OTHER = 0.02
-DEBOUNCE_UP      = 0.05
+STABLE_MS_ALPHA = 0.02
+STABLE_MS_OTHER = 0.015
+DEBOUNCE_UP      = 0.01
 TAP_WINDOW       = 0.5
 MIN_TAP_INT      = 0.1
 L5_REPEAT_MS     = 0.1
@@ -119,6 +119,7 @@ LAYER_LOCK_COOLDOWN = 0.1
 SCROLL_REPEAT_MS  = 0.15
 THUMB_HOLD_TO_LOCK = 0.12
 NEXT_OK = 0.0
+SCAN_LOOP = 0.003
 
 # ─── State variables ────────────────────────────────────────────────
 layer            = 1
@@ -569,4 +570,4 @@ def check_chords():
 # ─── Main loop ───────────────────────────────────────────────────────
 while True:
     check_chords()
-    time.sleep(0.01)
+    time.sleep(SCAN_LOOP)
