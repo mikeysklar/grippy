@@ -6,7 +6,7 @@ import displayio
 from fourwire import FourWire
 from adafruit_st7789 import ST7789
 import terminalio
-from adafruit_display_text import label
+from adafruit_display_text import bitmap_label as label
 import chords_config
 import storage
 
@@ -50,9 +50,9 @@ bg_palette[0] = 0x000000
 bg = displayio.TileGrid(bg_bitmap, pixel_shader=bg_palette)
 display_group.append(bg)  # background at z=0
 
-text_buffer = ""
-text_label = label.Label(terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=3)
-display_group.append(text_label)
+#text_buffer = ""
+#text_label = label.Label(terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=4)
+#display_group.append(text_label)
 
 try:
     display.refresh(minimum_frames_per_second=0)
@@ -64,7 +64,7 @@ bl.value = True  # now turn on the backlight
 # Main text label 
 text_buffer = ""
 text_label = label.Label(
-    terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=3
+    terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=5
 )
 display_group.append(text_label)
 
@@ -155,9 +155,9 @@ ACCEL_MULTIPLIER = 2
 ACCEL_CHORD = (1, 2, 3)
 
 # ─── Text window geometry for ST7789 ─────────────────────────────────
-COLS = 13          # chars per line
-ROWS = 5           # lines on screen
-WINDOW_SIZE = COLS * ROWS  # 65 chars
+COLS = 8           # chars per line
+ROWS = 3           # lines on screen
+WINDOW_SIZE = COLS * ROWS  # 41 chars
 
 def _format_window(s: str) -> str:
     """Pad to window size and break into ROWS lines of COLS chars."""
