@@ -36,12 +36,30 @@ display = ST7789(
     height=240,
     rotation=270,   # matches your test
     rowstart=20,
-    colstart=0
+    colstart=0,
+    auto_refresh=False,
 )
 
 display_group = displayio.Group(scale=1)
 display.root_group = display_group
 
+# --- Black background tile ---
+bg_bitmap = displayio.Bitmap(280, 240, 1)
+bg_palette = displayio.Palette(1)
+bg_palette[0] = 0x000000
+bg = displayio.TileGrid(bg_bitmap, pixel_shader=bg_palette)
+display_group.append(bg)  # background at z=0
+
+text_buffer = ""
+text_label = label.Label(terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=3)
+display_group.append(text_label)
+
+try:
+    display.refresh(minimum_frames_per_second=0)
+except TypeError:
+    display.refresh()
+
+bl.value = True  # now turn on the backlight
 
 # Main text label 
 text_buffer = ""
@@ -146,6 +164,14 @@ def _format_window(s: str) -> str:
     s = s + " " * max(0, WINDOW_SIZE - len(s))
     return "\n".join(s[i:i+COLS] for i in range(0, WINDOW_SIZE, COLS))
 
+def _set_and_refresh(s: str):
+    if s != text_label.text:
+        text_label.text = s
+        try:
+            display.refresh(minimum_frames_per_second=0)
+        except TypeError:
+            display.refresh()
+
 # ─── edit view ──────────────────────────────────────────────
 def render_typing_window():
     """Render a COLS×ROWS window of text_buffer starting at typing_offset."""
@@ -155,7 +181,7 @@ def render_typing_window():
     start = typing_offset
     end   = typing_offset + WINDOW_SIZE
     window = text_buffer[start:end]
-    text_label.text = _format_window(window)
+    _set_and_refresh(_format_window(window))
 
 # ─── Save-to-file config ──────────────────────────────────────────────
 SAVE_PATH = "/notes.txt"
@@ -216,7 +242,7 @@ def save_entry():
         print(f"Saved {len(entry)} chars to {path}")
         # Clear buffer for the next entry
         text_buffer = ""
-        text_label.text = text_buffer
+        _set_and_refresh(text_buffer)
     except OSError as e:
         print("Save failed:", e)
 
@@ -265,20 +291,20 @@ def render_entry_window():
     global text_label
     if not entries:
         text_label.text = "(no notes)"
+        _set_and_refresh("(no notes)")
         return
     s = entries[entry_idx]
     # Clamp offset
     max_off = max(0, len(s) - WINDOW_SIZE)
     start = max(0, min(entry_offset, max_off))
     window = s[start:start+WINDOW_SIZE]
-    text_label.text = _format_window(window)
-
+    _set_and_refresh(_format_window(window))
 
 def enter_viewer():
     """Clear screen, load entries, show first entry."""
     global viewer_mode, text_buffer
     text_buffer = ""           # clear typing buffer on entry
-    text_label.text = ""       # clear screen immediately
+    _set_and_refresh("")
     load_entries()
     viewer_mode = True
     render_entry_window()
@@ -364,7 +390,7 @@ def check_chords():
             enable_hid()
         else:
             disable_hid()
-        text_label.text = "HID: ON" if usbmode else "HID: OFF"
+        _set_and_refresh("HID: ON" if usbmode else "HID: OFF")
         last_combo = combo
         sent_release = True
         time.sleep(0.3)  # debounce
