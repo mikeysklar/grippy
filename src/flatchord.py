@@ -118,6 +118,7 @@ NAV_REPEAT_MS    = 0.2
 LAYER_LOCK_COOLDOWN = 0.1
 SCROLL_REPEAT_MS  = 0.15
 THUMB_HOLD_TO_LOCK = 0.12
+NEXT_OK = 0.0
 
 # ─── State variables ────────────────────────────────────────────────
 layer            = 1
@@ -343,9 +344,13 @@ def check_chords():
     global modifier_armed, held_modifier, last_time, last_repeat, accel_active
     global held_nav_combo, last_nav, held_combo, last_pending_combo
     global held_scroll_combo, last_scroll, text_buffer, text_label
-    global usbmode, typing_offset
+    global usbmode, typing_offset, NEXT_OK
 
     now     = time.monotonic()
+    if now < NEXT_OK:
+        # still in debounce window—keep tracking state but don’t emit
+        last_combo = tuple(i for i, down in enumerate(tuple(not p.value for p in pins)) if down)
+        return
     pressed = tuple(not p.value for p in pins)
     combo   = tuple(i for i, down in enumerate(pressed) if down)
 
@@ -402,7 +407,7 @@ def check_chords():
             code = lm[combo]
             cc.send(code)
             sent_release = True
-            time.sleep(DEBOUNCE_UP)
+            NEXT_OK = now + DEBOUNCE_UP
 
     # ─── Layer-4 SCAG “arm” ───────────────────────────────────────────
     if layer == 4 and not modifier_armed and pending_combo in chords_config.scag:
@@ -422,7 +427,7 @@ def check_chords():
             mouse.click(chords_config.mouse_button_chords[pending_combo])
             held_combo   = ()
             sent_release = True
-            time.sleep(DEBOUNCE_UP)
+            NEXT_OK = now + DEBOUNCE_UP
             return
 
         if pending_combo in chords_config.mouse_scroll_chords and pending_changed:
@@ -551,7 +556,7 @@ def check_chords():
                             render_typing_window()
 
         sent_release = True
-        time.sleep(DEBOUNCE_UP)
+        NEXT_OK = now + DEBOUNCE_UP
 
     if not combo and last_combo:
         pending_combo  = None
