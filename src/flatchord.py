@@ -50,10 +50,6 @@ bg_palette[0] = 0x000000
 bg = displayio.TileGrid(bg_bitmap, pixel_shader=bg_palette)
 display_group.append(bg)  # background at z=0
 
-#text_buffer = ""
-#text_label = label.Label(terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=4)
-#display_group.append(text_label)
-
 try:
     display.refresh(minimum_frames_per_second=0)
 except TypeError:
@@ -64,7 +60,7 @@ bl.value = True  # now turn on the backlight
 # Main text label 
 text_buffer = ""
 text_label = label.Label(
-    terminalio.FONT, text=text_buffer, color=0xFFFFFF, x=20, y=20, scale=5
+    terminalio.FONT, text=text_buffer, color=0xFF00FF, x=20, y=25, scale=4
 )
 display_group.append(text_label)
 
@@ -157,9 +153,9 @@ ACCEL_MULTIPLIER = 2
 ACCEL_CHORD = (1, 2, 3)
 
 # ─── Text window geometry for ST7789 ─────────────────────────────────
-COLS = 8           # chars per line
-ROWS = 3           # lines on screen
-WINDOW_SIZE = COLS * ROWS  # 41 chars
+COLS = 10          # chars per line
+ROWS = 4           # lines on screen
+WINDOW_SIZE = COLS * ROWS  # 40 chars
 
 def _format_window(s: str) -> str:
     """Pad to window size and break into ROWS lines of COLS chars."""
