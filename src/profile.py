@@ -101,9 +101,12 @@ def disable_hid():
 
 # ─── Timing constants ────────────────────────────────────────────────
 SCAN_LOOP = 0.001
-STABLE_MS_ALPHA = 0.001
-STABLE_MS_OTHER = 0.001
-DEBOUNCE_UP      = 0.001
+#STABLE_MS_ALPHA = 0.001
+STABLE_MS_ALPHA = 0.03
+#STABLE_MS_OTHER = 0.001
+STABLE_MS_OTHER = 0.02
+#DEBOUNCE_UP      = 0.001
+DEBOUNCE_UP      = 0.05
 TAP_WINDOW       = 0.5
 MIN_TAP_INT      = 0.1
 L5_REPEAT_MS     = 0.1
@@ -698,5 +701,5 @@ while True:
     _maybe_refresh_budgeted()     # push at most one frame per ~18ms
     t1 = _now()
     prof_note_loop(t1 - t0)
-    prof_maybe_print()
+#    prof_maybe_print()
     time.sleep(SCAN_LOOP)

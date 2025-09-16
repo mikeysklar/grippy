@@ -11,11 +11,10 @@ import chords_config
 import storage
 
 time.sleep(0.1)
-
 displayio.release_displays()
 
-# --- Backlight (optional; tie high if not used) ---
-bl = digitalio.DigitalInOut(board.IO13)   # BLK
+# --- Backlight ---
+bl = digitalio.DigitalInOut(board.IO13)
 bl.direction = digitalio.Direction.OUTPUT
 bl.value = True
 
@@ -34,7 +33,7 @@ display = ST7789(
     display_bus,
     width=280,
     height=240,
-    rotation=270,   # matches your test
+    rotation=270,
     rowstart=20,
     colstart=0,
     auto_refresh=False,
@@ -48,30 +47,20 @@ bg_bitmap = displayio.Bitmap(280, 240, 1)
 bg_palette = displayio.Palette(1)
 bg_palette[0] = 0x000000
 bg = displayio.TileGrid(bg_bitmap, pixel_shader=bg_palette)
-display_group.append(bg)  # background at z=0
+display_group.append(bg)
 
 try:
     display.refresh(minimum_frames_per_second=0)
 except TypeError:
     display.refresh()
 
-bl.value = True  # now turn on the backlight
+bl.value = True  # backlight on
 
-# Main text label 
+# ─── Text buffer ─────────────────────────────────────────────────────
 text_buffer = ""
-text_label = label.Label(
-    terminalio.FONT, text=text_buffer, color=0xFF00FF, x=20, y=25, scale=4
-)
-display_group.append(text_label)
 
-SW_PINS = (
-    board.IO6,  # SW0
-    board.IO5,  # SW1
-    board.IO4,  # SW2
-    board.IO2,  # SW3
-    board.IO7,  # SW4
-)
-
+# ─── Switch inputs ───────────────────────────────────────────────────
+SW_PINS = (board.IO6, board.IO5, board.IO4, board.IO2, board.IO7)
 pins = []
 for gp in SW_PINS:
     p = digitalio.DigitalInOut(gp)
@@ -79,7 +68,7 @@ for gp in SW_PINS:
     p.pull = digitalio.Pull.UP
     pins.append(p)
 
-# ─── USB HID setup (start OFF) ─────────────────────────────────────────
+# ─── USB HID setup (start OFF) ───────────────────────────────────────
 usbmode = False
 keyboard = mouse = cc = None
 
@@ -105,9 +94,9 @@ def disable_hid():
 
 # ─── Timing constants ────────────────────────────────────────────────
 SCAN_LOOP = 0.001
-STABLE_MS_ALPHA = 0.001
-STABLE_MS_OTHER = 0.001
-DEBOUNCE_UP      = 0.001
+STABLE_MS_ALPHA = 0.03
+STABLE_MS_OTHER = 0.02
+DEBOUNCE_UP      = 0.05
 TAP_WINDOW       = 0.5
 MIN_TAP_INT      = 0.1
 L5_REPEAT_MS     = 0.1
@@ -144,7 +133,7 @@ thumb_locked       = False
 viewer_mode  = False
 entries      = []
 entry_idx    = 0
-entry_offset = 0  # kept for future per-entry scrolling (10-char steps)
+entry_offset = 0
 typing_offset = 0
 
 # ─── Mouse chords for layer-7 ────────────────────────────────────────
@@ -153,54 +142,93 @@ ACCEL_MULTIPLIER = 2
 ACCEL_CHORD = (1, 2, 3)
 
 # ─── Text window geometry for ST7789 ─────────────────────────────────
-COLS = 10          # chars per line
-ROWS = 4           # lines on screen
-WINDOW_SIZE = COLS * ROWS  # 40 chars
+SCALE   = 4
+GLYPH_W = 6 * SCALE          # terminalio glyph is 6x8
+GLYPH_H = 8 * SCALE
+COLS    = 10                 # ~10 chars/row at scale=4 fits well
+ROWS    = 5                  # 5 rows on screen
+WINDOW_SIZE = COLS * ROWS
+LEFT, TOP = 20, 0
+LINE_SPACING = 11            # extra pixels between rows
 
-def _format_window(s: str) -> str:
-    """Pad to window size and break into ROWS lines of COLS chars."""
-    s = s + " " * max(0, WINDOW_SIZE - len(s))
-    return "\n".join(s[i:i+COLS] for i in range(0, WINDOW_SIZE, COLS))
+line_labels = []
+_shown_lines = [""] * ROWS
+for r in range(ROWS):
+    lbl = label.Label(
+        terminalio.FONT,
+        text="",
+        color=0xFF00FF,
+        x=LEFT,
+        y=TOP + (r + 1) * GLYPH_H + r * LINE_SPACING,
+        scale=SCALE,
+    )
+    display_group.append(lbl)
+    line_labels.append(lbl)
 
-def _set_and_refresh(s: str):
-    if s != text_label.text:
-        text_label.text = s
+def _set_line(row: int, s: str) -> bool:
+    """Update one line if text changed; return True if dirtied."""
+    if s != _shown_lines[row]:
+        line_labels[row].text = s
+        _shown_lines[row] = s
+        return True
+    return False
+
+def _format_window_lines(s: str):
+    win = COLS * ROWS
+    s = s + " " * max(0, win - len(s))
+    return [s[i:i+COLS] for i in range(0, win, COLS)]
+
+# ─── Budgeted manual refresh ─────────────────────────────────────────
+USE_NS = hasattr(time, "monotonic_ns")
+_now = (time.monotonic_ns if USE_NS else lambda: int(time.monotonic()*1_000_000_000))
+
+NEEDS_REFRESH = False
+LAST_REFRESH_NS = 0
+MIN_REFRESH_INTERVAL_NS = int(1e9 / 55)   # ~55 fps cap (~18ms)
+
+def _maybe_refresh_budgeted():
+    global NEEDS_REFRESH, LAST_REFRESH_NS
+    if not NEEDS_REFRESH:
+        return
+    now_ns = _now()
+    if (now_ns - LAST_REFRESH_NS) >= MIN_REFRESH_INTERVAL_NS:
         try:
             display.refresh(minimum_frames_per_second=0)
         except TypeError:
             display.refresh()
+        LAST_REFRESH_NS = now_ns
+        NEEDS_REFRESH = False
 
 # ─── edit view ──────────────────────────────────────────────
 def render_typing_window():
     """Render a COLS×ROWS window of text_buffer starting at typing_offset."""
-    global text_buffer, text_label, typing_offset
-    # Clamp offset in case buffer shrank
-    typing_offset = max(0, min(typing_offset, max(0, len(text_buffer) - WINDOW_SIZE)))
-    start = typing_offset
-    end   = typing_offset + WINDOW_SIZE
-    window = text_buffer[start:end]
-    _set_and_refresh(_format_window(window))
+    global typing_offset, NEEDS_REFRESH
+    win = COLS * ROWS
+    typing_offset = max(0, min(typing_offset, max(0, len(text_buffer) - win)))
+    start, end = typing_offset, typing_offset + win
+    lines = _format_window_lines(text_buffer[start:end])
+    dirty = False
+    for r, s in enumerate(lines):
+        dirty |= _set_line(r, s)
+    if dirty:
+        NEEDS_REFRESH = True
 
 # ─── Save-to-file config ──────────────────────────────────────────────
 SAVE_PATH = "/notes.txt"
 
 def _insert_code():
-    # Try to get Keycode.INSERT without requiring HID to be enabled
     try:
         from adafruit_hid.keycode import Keycode
         return Keycode.INSERT
     except Exception:
-        # HID usage ID for Insert is 73
-        return 73
+        return 73  # HID usage ID for Insert
 
 INSERT_CODE = _insert_code()
 
-# ─── Make FS writable if it’s read-only ──────────────────────────────
 def ensure_writable():
     try:
         with open("/.__rw_test__", "w") as _t:
             _t.write("x")
-        # cleanup
         try:
             import os
             os.remove("/.__rw_test__")
@@ -208,7 +236,6 @@ def ensure_writable():
             pass
         return True
     except OSError:
-        # Attempt to remount read-write
         try:
             storage.remount("/", False)  # False => read-write
             return True
@@ -216,36 +243,30 @@ def ensure_writable():
             print("Remount failed:", e)
             return False
 
-# ─── save ────────────────────────────────────────────
 def save_entry():
-    global text_buffer, text_label
+    global text_buffer
     entry = text_buffer.rstrip("\n")
     path = "/notes.txt"
-
-    # Ensure FS is writable; try once to fix if not
     if not ensure_writable():
         print("Save aborted: filesystem still read-only")
         return
-
     try:
         with open(path, "a") as f:
             if entry:
-                f.write(entry + ",\n")   # <-- add comma + newline
+                f.write(entry + ",\n")
             else:
-                f.write(",\n")           # <-- blank entry still has comma
+                f.write(",\n")
         try:
             storage.sync()
         except Exception:
             pass
         print(f"Saved {len(entry)} chars to {path}")
-        # Clear buffer for the next entry
         text_buffer = ""
-        _set_and_refresh(text_buffer)
+        render_typing_window()
     except OSError as e:
         print("Save failed:", e)
 
 # ─── viewer mode ───────────────────────────────────────────────
-
 def _kc(vname, fallback):
     try:
         from adafruit_hid.keycode import Keycode
@@ -259,7 +280,6 @@ KC_UP        = _kc("UP_ARROW",  82)
 KC_DOWN      = _kc("DOWN_ARROW",81)
 
 def load_entries():
-    """(Re)load entries from /notes.txt, ignoring blanks like ',\\n'."""
     global entries, entry_idx, entry_offset
     try:
         with open(SAVE_PATH, "r") as f:
@@ -269,46 +289,45 @@ def load_entries():
         entry_idx = 0
         entry_offset = 0
         return
-
     parts = data.split(",\n")
     if parts and parts[-1] == "":
         parts.pop()
-
-    filtered = []
-    for p in parts:
-        if p.strip() == "":
-            continue
-        filtered.append(p.rstrip("\r\n"))
-
+    filtered = [p.rstrip("\r\n") for p in parts if p.strip() != ""]
     entries = filtered
     entry_idx = 0 if entries else 0
     entry_offset = 0
 
 def render_entry_window():
-    """Show current entry in a fixed COLS×ROWS window starting at entry_offset."""
-    global text_label
+    global NEEDS_REFRESH
     if not entries:
-        text_label.text = "(no notes)"
-        _set_and_refresh("(no notes)")
+        d = _set_line(0, "(no notes)")
+        d |= _set_line(1, "")
+        d |= _set_line(2, "")
+        d |= _set_line(3, "")
+        if d: NEEDS_REFRESH = True
         return
     s = entries[entry_idx]
-    # Clamp offset
-    max_off = max(0, len(s) - WINDOW_SIZE)
+    max_off = max(0, len(s) - (COLS*ROWS))
     start = max(0, min(entry_offset, max_off))
-    window = s[start:start+WINDOW_SIZE]
-    _set_and_refresh(_format_window(window))
+    window = s[start:start+(COLS*ROWS)]
+    lines = _format_window_lines(window)
+    d = False
+    for r, t in enumerate(lines):
+        d |= _set_line(r, t)
+    if d: NEEDS_REFRESH = True
 
 def enter_viewer():
-    """Clear screen, load entries, show first entry."""
-    global viewer_mode, text_buffer
-    text_buffer = ""           # clear typing buffer on entry
-    _set_and_refresh("")
+    global viewer_mode, text_buffer, NEEDS_REFRESH
+    text_buffer = ""
+    d = False
+    for r in range(ROWS):
+        d |= _set_line(r, "")
+    if d: NEEDS_REFRESH = True
     load_entries()
     viewer_mode = True
     render_entry_window()
 
 def handle_page_nav(kc):
-    """PAGE_UP/PAGE_DOWN with wrap-around between entries."""
     global entry_idx, entry_offset
     if not entries:
         render_entry_window()
@@ -321,7 +340,6 @@ def handle_page_nav(kc):
     render_entry_window()
 
 def handle_intra_scroll(kc):
-    """Scroll inside the current entry by one line (COLS chars)."""
     global entry_offset
     if not entries:
         render_entry_window()
@@ -334,24 +352,40 @@ def handle_intra_scroll(kc):
         entry_offset = min(max_off, entry_offset + COLS)
     render_entry_window()
 
+def _update_last_char_only():
+    global NEEDS_REFRESH
+    win = COLS * ROWS
+    start = typing_offset
+    caret = len(text_buffer) - 1
+    if caret < start or caret >= start + win:
+        return
+    rel = caret - start
+    row = rel // COLS
+    row_start = start + row * COLS
+    row_text = text_buffer[row_start:row_start+COLS]
+    row_text = row_text + " " * max(0, COLS - len(row_text))
+    if _set_line(row, row_text):
+        NEEDS_REFRESH = True
+
 # ─── Core chord logic ────────────────────────────────────────────────
 def check_chords():
     global layer, thumb_taps, last_tap_time
     global last_combo, pending_combo, sent_release, skip_scag, scag_skip_combo
     global modifier_armed, held_modifier, last_time, last_repeat, accel_active
     global held_nav_combo, last_nav, held_combo, last_pending_combo
-    global held_scroll_combo, last_scroll, text_buffer, text_label
+    global held_scroll_combo, last_scroll, text_buffer
     global usbmode, typing_offset, NEXT_OK
 
-    now     = time.monotonic()
+    now = time.monotonic()
     if now < NEXT_OK:
         # still in debounce window—keep tracking state but don’t emit
         last_combo = tuple(i for i, down in enumerate(tuple(not p.value for p in pins)) if down)
         return
+
     pressed = tuple(not p.value for p in pins)
     combo   = tuple(i for i, down in enumerate(pressed) if down)
 
-    # ─── A) Pure-thumb release ⇒ layer-lock ───────────────────────────
+    # A) Pure-thumb release ⇒ layer-lock
     if last_combo == (4,) and combo == ():
         if now - last_tap_time < TAP_WINDOW:
             thumb_taps += 1
@@ -370,7 +404,7 @@ def check_chords():
         last_combo = combo
         return
 
-    # ─── B) Stabilize into pending_combo ──────────────────────────────
+    # B) Stabilize into pending_combo
     if combo != last_combo:
         last_time = now
         if last_combo == () and combo != ():
@@ -386,19 +420,20 @@ def check_chords():
 
     lm = chords_config.layer_maps[layer]
 
-    # ─── Special: Layer‑3 chord (0,1,2,3,4) → toggle HID ──────────────
+    # Special: Layer-3 chord (0,1,2,3,4) → toggle HID
     if layer == 3 and combo == (0,1,2,3,4) and combo != last_combo:
         if not usbmode:
             enable_hid()
         else:
             disable_hid()
-        _set_and_refresh("HID: ON" if usbmode else "HID: OFF")
+        if _set_line(ROWS-1, "HID: ON" if usbmode else "HID: OFF"):
+            NEEDS_REFRESH = True
         last_combo = combo
         sent_release = True
-        time.sleep(0.3)  # debounce
+        time.sleep(0.3)  # (optionally: NEXT_OK = now + 0.12)
         return
 
-    # ─── macOS media keys ─────────────────────────────────────────────
+    # macOS media keys
     if usbmode and layer == 6:
         if combo and combo != last_combo and combo in lm:
             code = lm[combo]
@@ -406,7 +441,7 @@ def check_chords():
             sent_release = True
             NEXT_OK = now + DEBOUNCE_UP
 
-    # ─── Layer-4 SCAG “arm” ───────────────────────────────────────────
+    # Layer-4 SCAG “arm”
     if layer == 4 and not modifier_armed and pending_combo in chords_config.scag:
         held_modifier   = chords_config.scag[pending_combo]
         modifier_armed  = True
@@ -416,7 +451,7 @@ def check_chords():
         last_combo      = ()
         return
 
-    # ─── Layer-5: Mouse ───────────────────────────────────────────────
+    # Layer-5: Mouse
     if usbmode and layer == 5:
         accel_active = (pending_combo == chords_config.ACCEL_CHORD)
 
@@ -436,11 +471,9 @@ def check_chords():
             sent_release      = True
             return
 
-        if (
-            pending_combo == held_scroll_combo
+        if (pending_combo == held_scroll_combo
             and pending_combo in chords_config.mouse_scroll_chords
-            and (now - last_scroll) >= SCROLL_REPEAT_MS
-        ):
+            and (now - last_scroll) >= SCROLL_REPEAT_MS):
             amt = chords_config.mouse_scroll_chords[pending_combo]
             if accel_active: amt *= ACCEL_MULTIPLIER
             mouse.move(wheel=amt)
@@ -456,9 +489,9 @@ def check_chords():
             sent_release = True
             return
 
-        if pending_combo == held_combo \
-           and pending_combo in chords_config.mouse_move_chords \
-           and (now - last_repeat) >= L5_REPEAT_MS:
+        if (pending_combo == held_combo
+            and pending_combo in chords_config.mouse_move_chords
+            and (now - last_repeat) >= L5_REPEAT_MS):
             dx, dy = chords_config.mouse_move_chords[held_combo]
             if accel_active: dx *= ACCEL_MULTIPLIER; dy *= ACCEL_MULTIPLIER
             mouse.move(dx, dy)
@@ -477,7 +510,7 @@ def check_chords():
             sent_release = True
             return
 
-    # ─── First-release send for layers 1–3,6-7 ───────────────────────
+    # First-release send for layers 1–3,6-7
     if len(combo) < len(last_combo) and last_combo and not sent_release:
         if skip_scag and last_combo == scag_skip_combo:
             skip_scag = False
@@ -493,7 +526,6 @@ def check_chords():
                 skip_scag       = False
 
             elif layer in (1, 2, 3, 6, 7):
-                # Skip HID toggle chord (layer-3, (0,1,2,3,4))
                 if use != (4,) and not (layer == 3 and use == (0,1,2,3,4)):
                     kc = lm.get(use)
                     if kc:
@@ -501,56 +533,53 @@ def check_chords():
                             keyboard.press(kc)
                             keyboard.release_all()
 
-                        if kc == 61:  # handled above
+                        if kc == 61:
                             pass
 
                         elif kc == 42:  # Backspace
                             if text_buffer:
                                 text_buffer = text_buffer[:-1]
-                                # If we deleted back past the current window, pull it up by one line
                                 if typing_offset > 0 and len(text_buffer) <= typing_offset:
                                     typing_offset = max(0, typing_offset - COLS)
                             render_typing_window()
 
                         elif kc == INSERT_CODE:
                             save_entry()
-                            time.sleep(0.15)
+                            time.sleep(0.15)  # (optionally: NEXT_OK = now + 0.15)
 
                         elif kc in (KC_PAGE_UP, KC_PAGE_DOWN):
                             if not viewer_mode:
-                                enter_viewer()          # clears screen, loads first entry
+                                enter_viewer()
                             else:
-                                handle_page_nav(kc)     # wrap-around prev/next
-                            time.sleep(0.12)
+                                handle_page_nav(kc)
+                            time.sleep(0.12)  # (optionally: NEXT_OK = now + 0.12)
 
                         elif kc in (KC_UP, KC_DOWN):
                             if not viewer_mode:
                                 enter_viewer()
                             handle_intra_scroll(kc)
-                            time.sleep(0.08)
+                            time.sleep(0.08)  # (optionally: NEXT_OK = now + 0.08)
 
                         else:
-                            # 1. Map kc -> printable char
-                            if 4 <= kc <= 29:        # A-Z
+                            # map kc -> printable char
+                            if 4 <= kc <= 29:
                                 char = chr(kc - 4 + ord('a'))
-                            elif 30 <= kc <= 38:     # 1-9
+                            elif 30 <= kc <= 38:
                                 char = chr(kc - 30 + ord('1'))
-                            elif kc == 39:           # 0
+                            elif kc == 39:
                                 char = "0"
-                            elif kc == 44:           # Space
+                            elif kc == 44:
                                 char = " "
                             else:
-                                char = "?"           # fallback
+                                char = "?"
 
-                            # 2. Append the character
                             text_buffer += char
 
-                            # 3. If we overflow the COLS×ROWS window, scroll down one line (COLS chars)
-                            if len(text_buffer) > typing_offset + WINDOW_SIZE:
+                            if len(text_buffer) > typing_offset + (COLS*ROWS):
                                 typing_offset += COLS
-
-                            # 4. Render the current typing window
-                            render_typing_window()
+                                render_typing_window()
+                            else:
+                                _update_last_char_only()
 
         sent_release = True
         NEXT_OK = now + DEBOUNCE_UP
@@ -566,4 +595,5 @@ def check_chords():
 # ─── Main loop ───────────────────────────────────────────────────────
 while True:
     check_chords()
+    _maybe_refresh_budgeted()
     time.sleep(SCAN_LOOP)
