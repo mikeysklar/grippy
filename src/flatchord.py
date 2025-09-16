@@ -430,7 +430,7 @@ def check_chords():
             NEEDS_REFRESH = True
         last_combo = combo
         sent_release = True
-        time.sleep(0.3)  # (optionally: NEXT_OK = now + 0.12)
+        NEXT_OK = now + 0.12  # non-blocking cooldown
         return
 
     # macOS media keys
@@ -545,20 +545,20 @@ def check_chords():
 
                         elif kc == INSERT_CODE:
                             save_entry()
-                            time.sleep(0.15)  # (optionally: NEXT_OK = now + 0.15)
+                            NEXT_OK = now + 0.15
 
                         elif kc in (KC_PAGE_UP, KC_PAGE_DOWN):
                             if not viewer_mode:
                                 enter_viewer()
                             else:
                                 handle_page_nav(kc)
-                            time.sleep(0.12)  # (optionally: NEXT_OK = now + 0.12)
+                            NEXT_OK = now + 0.12
 
                         elif kc in (KC_UP, KC_DOWN):
                             if not viewer_mode:
                                 enter_viewer()
                             handle_intra_scroll(kc)
-                            time.sleep(0.08)  # (optionally: NEXT_OK = now + 0.08)
+                            NEXT_OK = now + 0.08
 
                         else:
                             # map kc -> printable char
