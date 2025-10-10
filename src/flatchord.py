@@ -10,7 +10,7 @@ from adafruit_display_text import bitmap_label as label
 import chords_config
 import storage
 
-time.sleep(0.1)
+time.sleep(0.25)
 displayio.release_displays()
 
 # --- Backlight ---
