@@ -5,17 +5,17 @@
       "Application": "Pcbnew",
       "Version": "9.0.0"
     },
-    "CreationDate": "2025-09-27T11:06:57-07:00"
+    "CreationDate": "2025-10-18T19:30:22-07:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
-      "Name": "grippy",
-      "GUID": "67726970-7079-42e6-9b69-6361645f7063",
+      "Name": "grippy-rt-ang",
+      "GUID": "67726970-7079-42d7-9274-2d616e672e6b",
       "Revision": "rev?"
     },
     "Size": {
-      "X": 35.2362,
-      "Y": 60.8074
+      "X": 60.8074,
+      "Y": 35.2362
     },
     "LayerNumber": 2,
     "BoardThickness": 1.6,
@@ -34,47 +34,47 @@
   ],
   "FilesAttributes": [
     {
-      "Path": "grippy-F_Cu.gbr",
+      "Path": "grippy-rt-ang-F_Cu.gbr",
       "FileFunction": "Copper,L1,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "grippy-B_Cu.gbr",
+      "Path": "grippy-rt-ang-B_Cu.gbr",
       "FileFunction": "Copper,L2,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "grippy-F_Paste.gbr",
+      "Path": "grippy-rt-ang-F_Paste.gbr",
       "FileFunction": "SolderPaste,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "grippy-B_Paste.gbr",
+      "Path": "grippy-rt-ang-B_Paste.gbr",
       "FileFunction": "SolderPaste,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "grippy-F_Silkscreen.gbr",
+      "Path": "grippy-rt-ang-F_Silkscreen.gbr",
       "FileFunction": "Legend,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "grippy-B_Silkscreen.gbr",
+      "Path": "grippy-rt-ang-B_Silkscreen.gbr",
       "FileFunction": "Legend,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "grippy-F_Mask.gbr",
+      "Path": "grippy-rt-ang-F_Mask.gbr",
       "FileFunction": "SolderMask,Top",
       "FilePolarity": "Negative"
     },
     {
-      "Path": "grippy-B_Mask.gbr",
+      "Path": "grippy-rt-ang-B_Mask.gbr",
       "FileFunction": "SolderMask,Bot",
       "FilePolarity": "Negative"
     },
     {
-      "Path": "grippy-Edge_Cuts.gbr",
+      "Path": "grippy-rt-ang-Edge_Cuts.gbr",
       "FileFunction": "Profile",
       "FilePolarity": "Positive"
     }
