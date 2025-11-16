@@ -1,6 +1,6 @@
 # Grippy – Ultracompact One-Handed “Grippy” Keyboard
 
-[Grippy Assembled](images/grippy-asm.jpeg)
+![Grippy Assembled](images/grippy-asm.jpeg)
 
 ## Overview
 
