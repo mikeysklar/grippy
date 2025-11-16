@@ -56,7 +56,5 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
 
 | File                     | Description                        | Markdown usage example |
 | ------------------------ | ---------------------------------- | ---------------------- |
-| `![cad](cad)`            | FreeCAD case Files (3mF)           | `![case](images/freecad-case.png)` |
-| `![kicad](grippy)`       | KiCAD files ippy                   | `![grippy asm](images/grippy-asm.jpeg)` |
-| `images/kicad-raytrace.jpg`  | Render / raytrace from KiCad       | `![raytrace](images/kicad-raytrace.jpg)` |
-| `images/no-dissassemble.jpeg`| “No disassemble” glam shot         | `![no disassemble](images/no-dissassemble.jpeg)` |
+|  ![cad](cad)             | FreeCAD case Files (3mF)           |  ![case](images/freecad-case.png)  |
+|  ![kicad](grippy)        | KiCAD files                        |  ![grippy asm](images/grippy-asm.jpeg)  |
