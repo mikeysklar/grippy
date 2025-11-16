@@ -52,9 +52,3 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
 
 ![Inside](images/no-dissassemble.jpeg)
 
-## Files & Project Layout
-
-| File                     | Description                        | Markdown usage example |
-| ------------------------ | ---------------------------------- | ---------------------- |
-|  ![cad](cad)             | FreeCAD case Files (3mF)           |  ![case](images/freecad-case.png)  |
-|  ![kicad](grippy)        | KiCAD files                        |  ![grippy asm](images/grippy-asm.jpeg)  |
