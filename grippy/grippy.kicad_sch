@@ -2497,7 +2497,7 @@
 				)
 			)
 		)
-		(property "Footprint" "footprints:tft-169-st7789"
+		(property "Footprint" "footprints:tft-169-st7789-rt-ang"
 			(at 242.57 73.66 0)
 			(effects
 				(font

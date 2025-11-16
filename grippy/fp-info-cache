@@ -1,4 +1,4 @@
-24850291980262958
+24852052735511211
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -99765,6 +99765,13 @@ switch spdt
 3
 footprints
 tft-169-st7789
+
+
+0
+8
+8
+footprints
+tft-169-st7789-rt-ang
 
 
 0
