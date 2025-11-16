@@ -1,6 +1,6 @@
 # Grippy – Ultracompact One-Handed “Grippy” Keyboard
 
-![Grippy Assembled](Images/grippy-asm.jpeg)
+[Grippy Assembled](images/grippy-asm.jpeg)
 
 ## Overview
 
@@ -8,7 +8,7 @@ Grippy started as a one-handed pocket keyboard. It uses chords (SAIE layout) to 
 
 I’ve gone through five complete hardware re-designs to achieve a low-profile ultralight EDC.
 
-![FreeCAD](Images/freecad-case.png)
+![FreeCAD](images/freecad-case.png)
 
 ### Features
 
@@ -36,7 +36,7 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
   - 3D-printable shell, buttons, and cap (`.3mf` files).
   - CircuitPython 10.x source, chord config, and main app code.
 
-![3D Board](Images/kicad-raytrace.jpg)
+![3D Board](images/kicad-raytrace.jpg)
 
 ## Specs
 
@@ -50,7 +50,7 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
 
 ---
 
-![Inside](Images/no-dissassemble.jpeg)
+![Inside](images/no-dissassemble.jpeg)
 
 ## Files & Project Layout
 
