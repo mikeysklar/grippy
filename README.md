@@ -4,7 +4,7 @@
 
 ## Overview
 
-Grippy started as a one-handed pocket keyboard. It uses chords (SAIE layout) to enter letters, numbers, and symbols. It quickly evolved into an everyday-carry note-taking pocket comptuer. 
+Grippy started as a one-handed pocket keyboard. It uses chords to enter letters, numbers, and symbols. It quickly evolved into an everyday-carry note-taking pocket comptuer. 
 
 I’ve gone through five complete hardware re-designs to achieve a low-profile ultralight EDC.
 
@@ -12,12 +12,17 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
 
 ### Features
 
+- **Slim & Lightweight**
+  - Thickness of a AAA battery on its side
+  - 7x less lighter than a typical iPhone
+
 - **One-handed SAIE chording**
   - Enter letters, numbers, symbols, and whitespace via chords.
-  - Optimized for thumb + fingers usage in a “grippy” hold.
+  - Three primary layers
+  - No travel for thumb or fingers
 
 - **Everyday carry note-taking**
-  - Designed to live in a pocket or bag.
+  - Take notes while in the pocket
   - Note-taking directly on device (no external keyboard required).
   - Review notes on device
 
@@ -25,16 +30,10 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
   - Acts as a USB HID keyboard when connected to a host.
   - Can be used for quick text entry or macro-style workflows.
 
-- **Ultracompact, slim form factor**
-  - Small footprint 
-  - Stacked SMD construction to keep the profile low 
-  - Minimal weight
-
 - **Open hardware / hackable**
-  - KiCad PCB project and STEP files.
-  - FreeCAD case modeling.
-  - 3D-printable shell, buttons, and cap (`.3mf` files).
-  - CircuitPython 10.x source, chord config, and main app code.
+  - KiCad and STEP files
+  - FreeCAD and 3mF files
+  - CircuitPython 10.x chord config, main app 
 
 ![3D Board](images/kicad-raytrace.jpg)
 
@@ -42,7 +41,7 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
 
 | Item        | Value                  |
 | ----------- | ---------------------- |
-| Dimensions  | 61 x 35 mm             |
+| Dimensions  | 61 x 35 x 11 mm        |
 | Weight      | 29 grams               |
 | Firmware    | CircuitPython 10.x     |
 | Controller  | ESP32-S3               |
