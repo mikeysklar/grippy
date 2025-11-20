@@ -4,9 +4,9 @@
 
 ## Overview
 
-Grippy started as a one-handed pocket keyboard. It uses chords to enter letters, numbers, and symbols. It quickly evolved into an everyday-carry note-taking pocket comptuer. 
-
-I’ve gone through five complete hardware re-designs to achieve a low-profile ultralight EDC.
+Grippy started as a one-handed pocket keyboard. Chords in, letters out.
+Five full hardware redesigns later, it’s an slim, ultralight EDC note-taking machine. 
+Grippy can also act as a USB or BLE keyboard.
 
 ![FreeCAD](images/freecad-case.png)
 
@@ -30,6 +30,9 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
   - Acts as a USB HID keyboard when connected to a host.
   - Can be used for quick text entry or macro-style workflows.
 
+- **USB storage mode**
+  - Mountable flash drive to modify notes
+
 - **Open hardware / hackable**
   - KiCad and STEP files
   - FreeCAD and 3mF files
@@ -50,4 +53,35 @@ I’ve gone through five complete hardware re-designs to achieve a low-profile u
 ---
 
 ![Inside](images/no-dissassemble.jpeg)
+
+## CircuitPython Setup
+
+---
+
+## BOM
+
+## Bill of Materials
+
+| Part                                                                                                  | Length / Size        | Qty |
+| ------------------------------------------------------------------------------------------------------ | -------------------- | --- |
+| Standoff                                                                                              | M2 × 5 mm            | 8   |
+| Screws                                                                                                | M2 × 5 mm            | 8   |
+| Female SMD Header                                                                                     | 8-pin                | 1   |
+| Right-Angle SMT Male Header                                                                           | 8-pin                | 1   |
+| Small LiPo Battery                                                                                    | 130 mAh (JST-1.25)   | 1   |
+| <a href="https://amzn.to/4idmH0o">ESP32-S3 SuperMini</a>                                              | —                    | 1   |
+| <a href="https://amzn.to/484M9jT">1.69” TFT Display</a>                                               | —                    | 1   |
+| <a href="https://www.digikey.com/en/products/detail/panasonic-electronic-components/EVQ-PUL02K/286340">Panasonic EVQ-PUL02K Tactile Switch</a> | — | 1 |
+
+---
+
+## PCB
+
+---
+
+## Stencil
+
+---
+
+## Schematic
 
