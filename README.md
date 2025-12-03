@@ -87,7 +87,8 @@ Grippy also supports USB or BLE keyboard modes.
 - <a href="https://circuitpython.org/board/espressif_esp32s3_devkitc_1_n8/">Bootloader 0.35.0 or later</a>
 - <a href="https://circuitpython.org/board/espressif_esp32s3_devkitc_1_n8/">CircuitPython 10.0.3 or later</a>
 
-```                                                                                                                                          circup install adafruit_st7789 adafruit_display_text adafruit_hid
+```
+circup install adafruit_st7789 adafruit_display_text adafruit_hid
 ```
 
 ---
