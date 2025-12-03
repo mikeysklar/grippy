@@ -1,48 +1,44 @@
-# Grippy – Ultracompact One-Handed “Grippy” Keyboard
+# Grippy – Ultracompact One-Handed Keyboard
 
 ![Grippy Assembled](images/grippy-asm.jpeg)
 
 ## Overview
 
-Grippy started as a one-handed pocket keyboard. Chords in, letters out.
-Five full hardware redesigns later, it’s an slim, ultralight EDC note-taking machine. 
+Started as a one-handed chording keyboard.
+Five revs later: a slim, ultralight EDC note-taker.
 
-Grippy can also supports USB or BLE keyboard modes.
+Grippy also supports USB or BLE keyboard modes.
 
 ![FreeCAD](images/freecad-case.png)
 
 ### Features
 
 - **Slim & Lightweight**
-  - Thickness of a AAA battery on its side
-  - 7x less lighter than a typical iPhone
+  - About the thickness of a AAA battery  
+  - ~7× lighter than an iPhone  
 
-- **One-handed SAIE chording**
-  - Enter letters, numbers, symbols, and whitespace via chords.
-  - Three primary layers
-  - No travel for thumb or fingers
+- **One-Handed SAIE Chording**
+  - Full text entry: letters, numbers, symbols  
+  - Three layers, zero finger travel  
 
-- **Everyday carry note-taking**
-  - Take notes while in the pocket
-  - Note-taking directly on device (no external keyboard required).
-  - Review notes on device
+- **EDC Note-Taking**
+  - Write and review notes directly on the device  
+  - Works even while pocketed  
 
-- **USB keyboard mode**
-  - Acts as a USB HID keyboard when connected to a host.
-  - Can be used for quick text entry or macro-style workflows.
+- **USB Keyboard Mode**
+  - USB HID for quick input or macros  
 
-- **BLE keyboard mode**
-  - Can remotely connect to phones and computers over BLE
+- **BLE Keyboard Mode**
+  - Wireless typing to phones and computers  
 
-- **USB storage mode**
-  - Mountable flash drive to modify notes
+- **USB Storage Mode**
+  - Mounts as a flash drive to edit notes  
 
-- **Open hardware / hackable**
-  - KiCad and STEP files
-  - FreeCAD and 3mF files
-  - CircuitPython 10.x chord config, main app 
+- **Open & Hackable**
+  - KiCad, STEP, FreeCAD, and 3MF files  
+  - CircuitPython 10.x firmware + chording config
 
-![3D Board](images/kicad-raytrace.jpg)
+![3D Board](images/kicad-raytrace.png)
 
 ## Specs
 
@@ -66,10 +62,10 @@ Grippy can also supports USB or BLE keyboard modes.
 
 ## Bill of Materials
 
-| Part                                                                                                  | Length / Size        | Qty |
+| Part                                                                                                  | Desc.                | Qty |
 | ------------------------------------------------------------------------------------------------------ | -------------------- | --- |
-| <a href="https://amzn.to/4idmH0o">ESP32-S3 SuperMini</a>                                              | —                    | 1   |
-| <a href="https://amzn.to/484M9jT">1.69” TFT Display</a>                                               | —                    | 1   |
+| <a href="https://amzn.to/4idmH0o">ESP32-S3 SuperMini</a>                                              | dual-core 240MHz / 512KB SRAM / 4MB Flash   | 1   |
+| <a href="https://amzn.to/484M9jT">1.69” TFT Display</a>                                               | ST7789 SPI           | 1   |
 | <a href="https://www.digikey.com/en/products/detail/panasonic-electronic-components/EVQ-PUL02K/286340">Panasonic EVQ-PUL02K Tactile Switch</a> | — | 1 |
 | <a href=https://amzn.to/48axBAR>Standoff</a> | M2 × 5 mm | 4   |
 | <a href=https://amzn.to/44vQJXr>Screws</a>| M2 × 5 mm            | 8   |
