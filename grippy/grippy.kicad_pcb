@@ -64,7 +64,6 @@
 			(psnegative no)
 			(psa4output no)
 			(plot_black_and_white yes)
-			(plotinvisibletext no)
 			(sketchpadsonfab no)
 			(plotpadnumbers no)
 			(hidednponfab no)
@@ -2425,7 +2424,7 @@
 			)
 		)
 		(embedded_fonts no)
-		(model "/Users/sklarm/Documents/KiCad/mikeysklar/3dmodels/tft-1.69-st7789v3-v1.4-tft-1.69-st7789v3.step"
+		(model "${KICAD_USER_3D_DIR}/tft-1.69-st7789-rt-ang-bld-out-tft-1.69-st7789v3.step"
 			(offset
 				(xyz 0 0 5)
 			)
