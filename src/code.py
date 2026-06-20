@@ -385,6 +385,20 @@ def check_chords():
     pressed = tuple(not p.value for p in pins)
     combo   = tuple(i for i, down in enumerate(pressed) if down)
 
+    # Sleep/wake: while the backlight is off the device sleeps. Any new chord
+    # turns the backlight back on and is consumed (so it doesn't type), since
+    # you can't see the screen to navigate back to the (3,4) toggle.
+    if not bl.value:
+        # Wake only on a clean press from fully-released (rising edge), so the
+        # partial-release flicker of the (3,4) sleep chord doesn't re-wake it.
+        if combo and last_combo == ():
+            bl.value     = True
+            print("Backlight: ON (wake)")
+            sent_release = True
+            NEXT_OK      = now + DEBOUNCE_UP
+        last_combo = combo
+        return
+
     # A) Pure-thumb release ⇒ layer-lock
     if last_combo == (4,) and combo == ():
         if now - last_tap_time < TAP_WINDOW:
@@ -428,6 +442,15 @@ def check_chords():
             disable_hid()
         if _set_line(ROWS-1, "HID: ON" if usbmode else "HID: OFF"):
             NEEDS_REFRESH = True
+        last_combo = combo
+        sent_release = True
+        NEXT_OK = now + 0.12  # non-blocking cooldown
+        return
+
+    # Special: Layer-3 chord (3,4) thumb+pinky → toggle backlight on/off
+    if layer == 3 and combo == (3, 4) and combo != last_combo:
+        bl.value = not bl.value
+        print("Backlight:", "ON" if bl.value else "OFF")
         last_combo = combo
         sent_release = True
         NEXT_OK = now + 0.12  # non-blocking cooldown
