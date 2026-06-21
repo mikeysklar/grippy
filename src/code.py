@@ -75,27 +75,21 @@ for gp in SW_PINS:
     p.pull = digitalio.Pull.UP
     pins.append(p)
 
-# ─── USB HID setup (start OFF) ───────────────────────────────────────
+# ─── USB HID setup (start OFF; keyboard only) ────────────────────────
 usbmode = False
-keyboard = mouse = cc = None
+keyboard = None
 
 def enable_hid():
-    global usbmode, keyboard, mouse, cc, Keycode, ConsumerControlCode
+    global usbmode, keyboard
     import usb_hid
     from adafruit_hid.keyboard import Keyboard
-    from adafruit_hid.mouse import Mouse
-    from adafruit_hid.consumer_control import ConsumerControl
-    from adafruit_hid.consumer_control_code import ConsumerControlCode
-    from adafruit_hid.keycode import Keycode
     keyboard = Keyboard(usb_hid.devices)
-    mouse = Mouse(usb_hid.devices)
-    cc = ConsumerControl(usb_hid.devices)
     usbmode = True
     print("USB HID enabled")
 
 def disable_hid():
-    global usbmode, keyboard, mouse, cc
-    keyboard = mouse = cc = None
+    global usbmode, keyboard
+    keyboard = None
     usbmode = False
     print("USB HID disabled")
 
@@ -111,12 +105,15 @@ NAV_REPEAT_MS    = 0.2
 LAYER_LOCK_COOLDOWN = 0.1
 SCROLL_REPEAT_MS  = 0.15
 THUMB_HOLD_TO_LOCK = 0.12
+LONG_HOLD_MENU    = 0.70   # thumb-only hold ≥ this ⇒ jump to the menu (longer = taps to alpha are safer)
 NEXT_OK = 0.0
 
 # ─── State variables ────────────────────────────────────────────────
 layer            = 1
 thumb_taps       = 0
 tap_in_prog      = False
+thumb_down_at    = 0.0
+long_hold_fired  = False
 last_tap_time    = 0.0
 last_combo       = ()
 pending_combo    = None
@@ -143,10 +140,16 @@ entry_idx    = 0
 entry_offset = 0
 typing_offset = 0
 
-# ─── Mouse chords for layer-7 ────────────────────────────────────────
-MOVE_DELTA = 5
-ACCEL_MULTIPLIER = 2
-ACCEL_CHORD = (1, 2, 3)
+# ─── Menu / sub-mode state ───────────────────────────────────────────
+# "Save Note" is prepended dynamically while a note is in progress (see
+# menu_items()), so switching layers never commits — saving is deliberate.
+_BASE_MENU = ["Add Note", "View Note", "WiFi Sync", "Clr Note", "Clr All", "HID"]
+menu_idx          = 0
+menu_top          = 0
+confirm_clear_all = False
+clear_mode        = False     # "Clr Note" picker active
+clear_idx         = 0
+clear_top         = 0
 
 # ─── Text window geometry for ST7789 ─────────────────────────────────
 SCALE   = 4
@@ -324,8 +327,9 @@ def render_entry_window():
     if d: NEEDS_REFRESH = True
 
 def enter_viewer():
-    global viewer_mode, text_buffer, NEEDS_REFRESH
-    text_buffer = ""
+    # NOTE: do NOT clear text_buffer — an in-progress note must survive a peek
+    # at the viewer (resume it later via "Add Note").
+    global viewer_mode, NEEDS_REFRESH
     d = False
     for r in range(ROWS):
         d |= _set_line(r, "")
@@ -374,10 +378,225 @@ def _update_last_char_only():
     if _set_line(row, row_text):
         NEEDS_REFRESH = True
 
+# ─── Printable-char map for the local note buffer ────────────────────
+# HID keycode → character to echo into text_buffer. Letters/digits are
+# computed; punctuation & whitespace come from this table. Non-printable
+# keys (Esc, arrows, nav, Delete) map to None → sent over HID but not echoed.
+_KC_CHAR = {
+    39: "0", 40: "\n", 43: " ", 44: " ", 45: "-", 46: "=",
+    47: "[", 48: "]", 49: "\\", 51: ";", 52: "'", 53: "`",
+    54: ",", 55: ".", 56: "/",
+}
+
+def _kc_to_char(kc):
+    if 4 <= kc <= 29:
+        return chr(kc - 4 + ord('a'))
+    if 30 <= kc <= 38:
+        return chr(kc - 30 + ord('1'))
+    return _KC_CHAR.get(kc)
+
+# ─── Menu (layer 1) ──────────────────────────────────────────────────
+def menu_items():
+    """Current menu list. 'Save Note' is shown only while a note's pending."""
+    if text_buffer:
+        return ["Save Note"] + _BASE_MENU
+    return _BASE_MENU
+
+def render_menu():
+    """Draw the layer-1 menu as a scrolling ROWS-high window with a > cursor."""
+    global NEEDS_REFRESH, menu_top, menu_idx
+    items = menu_items()
+    n = len(items)
+    if menu_idx >= n:
+        menu_idx = n - 1
+    if menu_idx < 0:
+        menu_idx = 0
+    if menu_idx < menu_top:
+        menu_top = menu_idx
+    elif menu_idx >= menu_top + ROWS:
+        menu_top = menu_idx - ROWS + 1
+    dirty = False
+    for r in range(ROWS):
+        i = menu_top + r
+        if i < n:
+            name = items[i]
+            if name == "HID":
+                name = "HID On" if usbmode else "HID Off"
+            elif name == "Clr All" and confirm_clear_all and i == menu_idx:
+                name = "Clr All?!"
+            s = ((">" if i == menu_idx else " ") + name)[:COLS]
+        else:
+            s = ""
+        dirty |= _set_line(r, s)
+    if dirty:
+        NEEDS_REFRESH = True
+
+def clear_all_notes():
+    if not ensure_writable():
+        print("Clear-all aborted: filesystem read-only")
+        return
+    try:
+        with open("/notes.txt", "w") as f:
+            f.write("")
+        try:
+            storage.sync()
+        except Exception:
+            pass
+        print("notes.txt emptied")
+    except OSError as e:
+        print("Clear-all failed:", e)
+
+def menu_activate():
+    """Run the highlighted menu item."""
+    global layer, thumb_taps, viewer_mode, confirm_clear_all, usbmode, menu_idx
+    item = menu_items()[menu_idx]
+    if item != "Clr All":
+        confirm_clear_all = False
+    if item == "Save Note":
+        save_entry()              # append + clear (no-op aborts if read-only)
+        menu_idx = 0
+        render_menu()
+    elif item == "Add Note":
+        viewer_mode = False
+        layer = 2
+        thumb_taps = 1            # 1 tap == alpha
+        render_typing_window()
+    elif item == "View Note":
+        enter_viewer()
+    elif item == "WiFi Sync":
+        start_remote()            # screen off + WiFi up
+    elif item == "Clr Note":
+        enter_clear()             # per-note delete picker
+    elif item == "Clr All":
+        if not confirm_clear_all:
+            confirm_clear_all = True
+            render_menu()         # shows "Clr All?!" — select again to wipe
+        else:
+            confirm_clear_all = False
+            clear_all_notes()
+            render_menu()
+    elif item == "HID":
+        if usbmode:
+            disable_hid()
+        else:
+            enable_hid()
+        render_menu()
+
+def handle_menu_input(use):
+    global menu_idx, confirm_clear_all
+    n = len(menu_items())
+    if use == (0,):
+        menu_idx = (menu_idx - 1) % n
+        confirm_clear_all = False
+        render_menu()
+    elif use == (3,):
+        menu_idx = (menu_idx + 1) % n
+        confirm_clear_all = False
+        render_menu()
+    elif use in ((1,), (2,), (1, 2)):
+        menu_activate()
+
+def handle_viewer_input(use):
+    """0 = previous entry, 3 = next entry, select = back to menu."""
+    global viewer_mode, entry_idx, entry_offset
+    if use in ((1,), (2,), (1, 2)):
+        viewer_mode = False
+        render_menu()
+        return
+    if not entries:
+        return
+    if use == (0,):
+        entry_idx = (entry_idx - 1) % len(entries)
+        entry_offset = 0
+        render_entry_window()
+    elif use == (3,):
+        entry_idx = (entry_idx + 1) % len(entries)
+        entry_offset = 0
+        render_entry_window()
+
+# ─── Clr Note: per-entry delete picker ───────────────────────────────
+def render_clear_list():
+    """Scrolling list of notes.txt entries with a > cursor (for deletion)."""
+    global NEEDS_REFRESH, clear_top
+    n = len(entries)
+    if n == 0:
+        d = _set_line(0, "(no notes)")
+        for r in range(1, ROWS):
+            d |= _set_line(r, "")
+        if d:
+            NEEDS_REFRESH = True
+        return
+    if clear_idx < clear_top:
+        clear_top = clear_idx
+    elif clear_idx >= clear_top + ROWS:
+        clear_top = clear_idx - ROWS + 1
+    dirty = False
+    for r in range(ROWS):
+        i = clear_top + r
+        if i < n:
+            text = entries[i].replace("\n", " ")
+            s = ((">" if i == clear_idx else " ") + text)[:COLS]
+        else:
+            s = ""
+        dirty |= _set_line(r, s)
+    if dirty:
+        NEEDS_REFRESH = True
+
+def enter_clear():
+    global clear_mode, clear_idx, clear_top
+    load_entries()
+    clear_idx = 0
+    clear_top = 0
+    clear_mode = True
+    render_clear_list()
+
+def delete_entry(idx):
+    """Rewrite notes.txt without entry idx."""
+    if not (0 <= idx < len(entries)):
+        return
+    if not ensure_writable():
+        print("Delete aborted: filesystem read-only")
+        return
+    del entries[idx]
+    try:
+        with open("/notes.txt", "w") as f:
+            for e in entries:
+                f.write(e + ",\n")
+        try:
+            storage.sync()
+        except Exception:
+            pass
+        print("Deleted entry", idx)
+    except OSError as e:
+        print("Delete failed:", e)
+
+def handle_clear_input(use):
+    global clear_mode, clear_idx
+    if not entries:
+        if use in ((0,), (3,), (1,), (2,), (1, 2)):
+            clear_mode = False
+            render_menu()
+        return
+    if use == (0,):
+        clear_idx = (clear_idx - 1) % len(entries)
+        render_clear_list()
+    elif use == (3,):
+        clear_idx = (clear_idx + 1) % len(entries)
+        render_clear_list()
+    elif use in ((1,), (2,), (1, 2)):
+        delete_entry(clear_idx)
+        if not entries:
+            clear_mode = False
+            render_menu()
+        else:
+            if clear_idx >= len(entries):
+                clear_idx = len(entries) - 1
+            render_clear_list()
+
 # ─── WiFi sync (remote) mode ─────────────────────────────────────────
 # Boot stays WiFi-off (no boot connect → no association brownout). The
-# (3,4) chord turns the screen OFF and brings WiFi up only then, so the
-# backlight (~80 mA) and the WiFi association spike never draw at once.
+# "WiFi Sync" menu item turns the screen OFF and brings WiFi up only then,
+# so the backlight (~80 mA) and the WiFi association spike never overlap.
 remote_active = False
 server = None
 _mdns   = None
@@ -501,12 +720,13 @@ def stop_remote():
 
 # ─── Core chord logic ────────────────────────────────────────────────
 def check_chords():
-    global layer, thumb_taps, last_tap_time
+    global layer, thumb_taps, last_tap_time, thumb_down_at, long_hold_fired
     global last_combo, pending_combo, sent_release, skip_scag, scag_skip_combo
     global modifier_armed, held_modifier, last_time, last_repeat, accel_active
     global held_nav_combo, last_nav, held_combo, last_pending_combo
     global held_scroll_combo, last_scroll, text_buffer
     global usbmode, typing_offset, NEXT_OK
+    global viewer_mode, confirm_clear_all, clear_mode
 
     now = time.monotonic()
     if now < NEXT_OK:
@@ -526,25 +746,63 @@ def check_chords():
         if combo and last_combo == ():
             stop_remote()   # WiFi off (if up) + backlight back on
             print("Backlight: ON (wake)")
+            layer        = 1          # wake home = menu
+            thumb_taps   = 1
+            viewer_mode  = False
+            clear_mode   = False
+            render_menu()
             sent_release = True
             NEXT_OK      = now + DEBOUNCE_UP
         last_combo = combo
         return
 
-    # A) Pure-thumb release ⇒ layer-lock
+    # A) Thumb-only gesture.
+    #    Short tap(s) → typing layer: 1=alpha, 2=numeric, 3=delim, 4=scag.
+    #    Long-hold (≥ LONG_HOLD_MENU) → jump to the menu. Saving stays explicit
+    #    (Save Note), so hopping layers / using thumb-chords never commits.
+    if combo == (4,):
+        if last_combo != (4,):
+            thumb_down_at   = now
+            long_hold_fired = False
+        elif (not long_hold_fired) and (now - thumb_down_at) >= LONG_HOLD_MENU:
+            long_hold_fired = True
+            layer           = 1
+            thumb_taps      = 0
+            pending_combo   = None
+            sent_release    = False
+            skip_scag       = False
+            modifier_armed  = False
+            held_modifier   = None
+            scag_skip_combo = None
+            viewer_mode     = False
+            clear_mode      = False
+            confirm_clear_all = False
+            print("→ menu (long-hold)")
+            render_menu()
+        last_combo = combo
+        return
+
     if last_combo == (4,) and combo == ():
-        if now - last_tap_time < TAP_WINDOW:
-            thumb_taps += 1
+        if long_hold_fired:
+            long_hold_fired = False          # menu already entered; consume release
         else:
-            thumb_taps = 1
-        last_tap_time = now
-        layer = min(thumb_taps, 7)
-        print(f"→ locked to layer-{layer}")
-        pending_combo = None
-        sent_release  = False
-        skip_scag     = False
-        modifier_armed = False
-        held_modifier = None
+            # short tap → select typing layer (1 tap == alpha == layer 2)
+            if now - last_tap_time < TAP_WINDOW:
+                thumb_taps += 1
+            else:
+                thumb_taps = 1
+            last_tap_time = now
+            layer = min(thumb_taps + 1, 5)
+            print("→ layer-%d" % layer)
+            viewer_mode = False
+            clear_mode = False
+            confirm_clear_all = False
+            render_typing_window()
+        pending_combo   = None
+        sent_release    = False
+        skip_scag       = False
+        modifier_armed  = False
+        held_modifier   = None
         scag_skip_combo = None
         held_scroll_combo = ()
         last_combo = combo
@@ -557,49 +815,37 @@ def check_chords():
             pending_combo = None
             sent_release  = False
 
-    ms = STABLE_MS_ALPHA if layer == 1 else STABLE_MS_OTHER
+    ms = STABLE_MS_ALPHA if layer == 2 else STABLE_MS_OTHER
     if combo and (now - last_time) >= ms and combo != pending_combo:
         pending_combo = combo
 
     pending_changed    = (pending_combo != last_pending_combo)
     last_pending_combo = pending_combo
 
+    # Layer 1: menu home (+ View / Clr-Note sub-modes). Act on finger-release.
+    # 0 = up/prev, 3 = down/next, 1 / 2 / (1,2) = select. Thumb taps switch layer.
+    if layer == 1:
+        if len(combo) < len(last_combo) and last_combo and not sent_release:
+            use = pending_combo or last_combo
+            if use != (4,):
+                if clear_mode:
+                    handle_clear_input(use)
+                elif viewer_mode:
+                    handle_viewer_input(use)
+                else:
+                    handle_menu_input(use)
+            sent_release = True
+            NEXT_OK = now + 0.12
+        if not combo and last_combo:
+            pending_combo = None
+            sent_release  = False
+        last_combo = combo
+        return
+
     lm = chords_config.layer_maps[layer]
 
-    # Special: Layer-3 chord (0,1,2,3,4) → toggle HID
-    if layer == 3 and combo == (0,1,2,3,4) and combo != last_combo:
-        if not usbmode:
-            enable_hid()
-        else:
-            disable_hid()
-        if _set_line(ROWS-1, "HID: ON" if usbmode else "HID: OFF"):
-            NEEDS_REFRESH = True
-        last_combo = combo
-        sent_release = True
-        NEXT_OK = now + 0.12  # non-blocking cooldown
-        return
-
-    # Special: Layer-3 chord (3,4) thumb+pinky → toggle WiFi-sync (remote) mode
-    if layer == 3 and combo == (3, 4) and combo != last_combo:
-        if bl.value:
-            start_remote()   # screen off + WiFi up + grippy.local server
-        else:
-            stop_remote()    # WiFi down + screen back on
-        last_combo = combo
-        sent_release = True
-        NEXT_OK = now + 0.12  # non-blocking cooldown
-        return
-
-    # macOS media keys
-    if usbmode and layer == 6:
-        if combo and combo != last_combo and combo in lm:
-            code = lm[combo]
-            cc.send(code)
-            sent_release = True
-            NEXT_OK = now + DEBOUNCE_UP
-
-    # Layer-4 SCAG “arm”
-    if layer == 4 and not modifier_armed and pending_combo in chords_config.scag:
+    # Layer-5 SCAG “arm”
+    if layer == 5 and not modifier_armed and pending_combo in chords_config.scag:
         held_modifier   = chords_config.scag[pending_combo]
         modifier_armed  = True
         scag_skip_combo = pending_combo
@@ -608,135 +854,44 @@ def check_chords():
         last_combo      = ()
         return
 
-    # Layer-5: Mouse
-    if usbmode and layer == 5:
-        accel_active = (pending_combo == chords_config.ACCEL_CHORD)
-
-        if pending_combo in chords_config.mouse_button_chords and pending_changed:
-            mouse.click(chords_config.mouse_button_chords[pending_combo])
-            held_combo   = ()
-            sent_release = True
-            NEXT_OK = now + DEBOUNCE_UP
-            return
-
-        if pending_combo in chords_config.mouse_scroll_chords and pending_changed:
-            amt = chords_config.mouse_scroll_chords[pending_combo]
-            if accel_active: amt *= ACCEL_MULTIPLIER
-            mouse.move(wheel=amt)
-            held_scroll_combo = pending_combo
-            last_scroll       = now
-            sent_release      = True
-            return
-
-        if (pending_combo == held_scroll_combo
-            and pending_combo in chords_config.mouse_scroll_chords
-            and (now - last_scroll) >= SCROLL_REPEAT_MS):
-            amt = chords_config.mouse_scroll_chords[pending_combo]
-            if accel_active: amt *= ACCEL_MULTIPLIER
-            mouse.move(wheel=amt)
-            last_scroll = now
-            return
-
-        if pending_combo in chords_config.mouse_move_chords and pending_changed:
-            dx, dy = chords_config.mouse_move_chords[pending_combo]
-            if accel_active: dx *= ACCEL_MULTIPLIER; dy *= ACCEL_MULTIPLIER
-            mouse.move(dx, dy)
-            held_combo   = pending_combo
-            last_repeat  = now
-            sent_release = True
-            return
-
-        if (pending_combo == held_combo
-            and pending_combo in chords_config.mouse_move_chords
-            and (now - last_repeat) >= L5_REPEAT_MS):
-            dx, dy = chords_config.mouse_move_chords[held_combo]
-            if accel_active: dx *= ACCEL_MULTIPLIER; dy *= ACCEL_MULTIPLIER
-            mouse.move(dx, dy)
-            last_repeat = now
-            return
-
-        if pending_combo in chords_config.mouse_hold_chords and pending_changed:
-            mouse.press(chords_config.mouse_hold_chords[pending_combo])
-            held_combo   = ()
-            sent_release = True
-            return
-
-        if pending_combo in chords_config.mouse_release_chords and pending_changed:
-            mouse.release(chords_config.mouse_release_chords[pending_combo])
-            held_combo   = ()
-            sent_release = True
-            return
-
-    # First-release send for layers 1–3,6-7
+    # First-release send for typing layers (2 alpha, 3 num, 4 delim) + SCAG (5)
     if len(combo) < len(last_combo) and last_combo and not sent_release:
         if skip_scag and last_combo == scag_skip_combo:
             skip_scag = False
         else:
             use = pending_combo or last_combo
-            if layer == 4 and modifier_armed and last_combo in chords_config.alpha and usbmode:
+            if layer == 5 and modifier_armed and last_combo in chords_config.alpha and usbmode:
                 key = chords_config.alpha[last_combo]
                 keyboard.press(held_modifier, key)
                 keyboard.release_all()
-                layer           = 1
-                thumb_taps      = 1
+                layer           = 2          # back to alpha to keep typing
+                thumb_taps      = 1          # 1 tap == alpha
                 modifier_armed  = False
                 skip_scag       = False
 
-            elif layer in (1, 2, 3, 6, 7):
-                if use != (4,) and not (layer == 3 and use == (0,1,2,3,4)):
+            elif layer in (2, 3, 4):
+                if use != (4,):
                     kc = lm.get(use)
                     if kc:
                         if usbmode:
                             keyboard.press(kc)
                             keyboard.release_all()
 
-                        if kc == 61:
-                            pass
-
-                        elif kc == 42:  # Backspace
+                        if kc == 42:  # Backspace — edit local buffer
                             if text_buffer:
                                 text_buffer = text_buffer[:-1]
                                 if typing_offset > 0 and len(text_buffer) <= typing_offset:
                                     typing_offset = max(0, typing_offset - COLS)
                             render_typing_window()
-
-                        elif kc == INSERT_CODE:
-                            save_entry()
-                            NEXT_OK = now + 0.15
-
-                        elif kc in (KC_PAGE_UP, KC_PAGE_DOWN):
-                            if not viewer_mode:
-                                enter_viewer()
-                            else:
-                                handle_page_nav(kc)
-                            NEXT_OK = now + 0.12
-
-                        elif kc in (KC_UP, KC_DOWN):
-                            if not viewer_mode:
-                                enter_viewer()
-                            handle_intra_scroll(kc)
-                            NEXT_OK = now + 0.08
-
                         else:
-                            # map kc -> printable char
-                            if 4 <= kc <= 29:
-                                char = chr(kc - 4 + ord('a'))
-                            elif 30 <= kc <= 38:
-                                char = chr(kc - 30 + ord('1'))
-                            elif kc == 39:
-                                char = "0"
-                            elif kc == 44:
-                                char = " "
-                            else:
-                                char = "?"
-
-                            text_buffer += char
-
-                            if len(text_buffer) > typing_offset + (COLS*ROWS):
-                                typing_offset += COLS
-                                render_typing_window()
-                            else:
-                                _update_last_char_only()
+                            char = _kc_to_char(kc)   # None for non-printable nav keys
+                            if char is not None:
+                                text_buffer += char
+                                if len(text_buffer) > typing_offset + (COLS*ROWS):
+                                    typing_offset += COLS
+                                    render_typing_window()
+                                else:
+                                    _update_last_char_only()
 
         sent_release = True
         NEXT_OK = now + DEBOUNCE_UP
@@ -750,6 +905,9 @@ def check_chords():
     last_combo = combo
 
 # ─── Main loop ───────────────────────────────────────────────────────
+render_menu()   # boot home = layer-1 menu
+_maybe_refresh_budgeted()
+
 while True:
     check_chords()
     if remote_active and server is not None:
