@@ -141,9 +141,9 @@ entry_offset = 0
 typing_offset = 0
 
 # ─── Menu / sub-mode state ───────────────────────────────────────────
-# "Save Note" is prepended dynamically while a note is in progress (see
-# menu_items()), so switching layers never commits — saving is deliberate.
-_BASE_MENU = ["Add Note", "View Note", "WiFi Sync", "Clr Note", "Clr All", "HID"]
+# A note auto-saves on the long-hold back to the menu (the only way home),
+# so layer switches never commit and there's no separate Save item.
+_BASE_MENU = ["New Note", "View Note", "WiFi Sync", "Clr Note", "Clr All", "HID"]
 menu_idx          = 0
 menu_top          = 0
 confirm_clear_all = False
@@ -397,9 +397,6 @@ def _kc_to_char(kc):
 
 # ─── Menu (layer 1) ──────────────────────────────────────────────────
 def menu_items():
-    """Current menu list. 'Save Note' is shown only while a note's pending."""
-    if text_buffer:
-        return ["Save Note"] + _BASE_MENU
     return _BASE_MENU
 
 def render_menu():
@@ -448,16 +445,13 @@ def clear_all_notes():
 
 def menu_activate():
     """Run the highlighted menu item."""
-    global layer, thumb_taps, viewer_mode, confirm_clear_all, usbmode, menu_idx
+    global layer, thumb_taps, viewer_mode, confirm_clear_all, usbmode, typing_offset
     item = menu_items()[menu_idx]
     if item != "Clr All":
         confirm_clear_all = False
-    if item == "Save Note":
-        save_entry()              # append + clear (no-op aborts if read-only)
-        menu_idx = 0
-        render_menu()
-    elif item == "Add Note":
+    if item == "New Note":
         viewer_mode = False
+        typing_offset = 0
         layer = 2
         thumb_taps = 1            # 1 tap == alpha
         render_typing_window()
@@ -758,8 +752,9 @@ def check_chords():
 
     # A) Thumb-only gesture.
     #    Short tap(s) → typing layer: 1=alpha, 2=numeric, 3=delim, 4=scag.
-    #    Long-hold (≥ LONG_HOLD_MENU) → jump to the menu. Saving stays explicit
-    #    (Save Note), so hopping layers / using thumb-chords never commits.
+    #    Long-hold (≥ LONG_HOLD_MENU) → jump to the menu, auto-saving any
+    #    in-progress note. Short taps never reach the menu, so hopping layers /
+    #    using thumb-chords never commits a note.
     if combo == (4,):
         if last_combo != (4,):
             thumb_down_at   = now
@@ -777,6 +772,8 @@ def check_chords():
             viewer_mode     = False
             clear_mode      = False
             confirm_clear_all = False
+            if text_buffer:
+                save_entry()      # auto-save the in-progress note on the way home
             print("→ menu (long-hold)")
             render_menu()
         last_combo = combo

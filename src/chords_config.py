@@ -58,6 +58,10 @@ num_nav = {
     (1, 3):         Keycode.NINE,
     (0, 1, 2):      Keycode.ZERO,
 
+    # Same backspace / space chords as the alpha layer
+    (0, 1, 3):      Keycode.BACKSPACE,
+    (0, 2, 3):      Keycode.SPACE,
+
     # Thumb-based ARROWS
     (0, 4):         Keycode.UP_ARROW,
     (1, 4):         Keycode.LEFT_ARROW,
