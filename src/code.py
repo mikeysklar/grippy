@@ -13,28 +13,17 @@ import storage
 time.sleep(0.25)
 displayio.release_displays()
 
-# --- Backlight (boot dark: press any key to wake) ---
-# Start with the backlight off so the ~80mA load isn't drawn during the WiFi
-# association spike at boot — lets the 130mAh cell come up without browning out.
-bl = digitalio.DigitalInOut(board.IO13)
-bl.direction = digitalio.Direction.OUTPUT
-bl.value = False
-
-# --- Radio: WiFi off, BLE workflow off at boot (low power) ---
-# WiFi browns out the 130mAh cell (sustained ~200mA association spike), so it is
-# never used. BLE is enabled on demand by the layer-3 (3,4) chord for wireless
-# notes.txt editing — code.circuitpython.org over BLE from a Mac (Chrome), or the
-# Bluefy app on iOS. BLE resets to off on power-cycle (stays low power by default).
-import supervisor
+# --- WiFi radio off (no networking; saves power) ---
 try:
     import wifi
-    wifi.radio.enabled = False   # only BLE uses the 2.4GHz radio
+    wifi.radio.enabled = False
 except Exception:
     pass
-try:
-    supervisor.runtime.ble_workflow = False
-except Exception as e:
-    print("ble init failed:", e)
+
+# --- Backlight ---
+bl = digitalio.DigitalInOut(board.IO13)
+bl.direction = digitalio.Direction.OUTPUT
+bl.value = True
 
 # --- SPI + 4-wire display bus ---
 spi = busio.SPI(clock=board.IO8, MOSI=board.IO9)   # no MISO required
@@ -72,7 +61,7 @@ try:
 except TypeError:
     display.refresh()
 
-bl.value = False  # boot dark — first keypress (any layer) wakes
+bl.value = True  # backlight on
 
 # ─── Text buffer ─────────────────────────────────────────────────────
 text_buffer = ""
@@ -385,6 +374,131 @@ def _update_last_char_only():
     if _set_line(row, row_text):
         NEEDS_REFRESH = True
 
+# ─── WiFi sync (remote) mode ─────────────────────────────────────────
+# Boot stays WiFi-off (no boot connect → no association brownout). The
+# (3,4) chord turns the screen OFF and brings WiFi up only then, so the
+# backlight (~80 mA) and the WiFi association spike never draw at once.
+remote_active = False
+server = None
+_mdns   = None
+
+def _load_wifi_conf(path="/wifi.conf"):
+    ssid = pw = None
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip().upper()
+                v = v.strip().strip('"').strip("'")
+                if k == "SSID":
+                    ssid = v
+                elif k == "PASSWORD":
+                    pw = v
+    except OSError:
+        pass
+    return ssid, pw
+
+def start_remote():
+    """Screen off → WiFi up → serve notes.txt at grippy.local."""
+    global remote_active, server, _mdns
+    # Screen off FIRST so backlight + WiFi association never overlap.
+    bl.value = False
+    try:
+        display.refresh(minimum_frames_per_second=0)
+    except Exception:
+        pass
+
+    ssid, pw = _load_wifi_conf()
+    if not ssid:
+        print("Remote: no SSID in wifi.conf; aborting")
+        bl.value = True
+        return
+
+    import wifi
+    import socketpool
+    import mdns
+    from adafruit_httpserver import Server, Response
+    try:
+        # Clean radio cycle before connect — a half-open radio throws
+        # "Unknown failure 2". Off → settle → on → settle, then connect.
+        wifi.radio.enabled = False
+        time.sleep(1)
+        wifi.radio.enabled = True
+        time.sleep(0.5)
+        try:
+            wifi.radio.tx_power = 11   # dBm — trim the association current spike
+        except Exception:
+            pass
+        print("Remote: connecting to", ssid)
+        for attempt in range(4):
+            try:
+                wifi.radio.connect(ssid, pw)
+                break
+            except Exception as e:
+                print("Remote: connect retry", attempt, e)
+                time.sleep(2)
+        ip = str(wifi.radio.ipv4_address)
+        if ip == "None":
+            raise RuntimeError("no IP after connect")
+        print("Remote: connected", ip, "tx_power", wifi.radio.tx_power)
+
+        _mdns = mdns.Server(wifi.radio)
+        _mdns.hostname = "grippy"
+        _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
+
+        pool = socketpool.SocketPool(wifi.radio)
+        srv = Server(pool, "/", debug=False)
+
+        def _serve_notes(request):
+            try:
+                with open("/notes.txt") as f:
+                    data = f.read()
+            except OSError:
+                data = ""
+            return Response(request, data, content_type="text/plain")
+
+        srv.route("/")(_serve_notes)
+        srv.route("/notes.txt")(_serve_notes)
+
+        srv.start(ip, port=80)
+        server = srv
+        remote_active = True
+        try:
+            import gc
+            print("Remote: mem_free", gc.mem_free())
+        except Exception:
+            pass
+        print("Remote: http://grippy.local/notes.txt  (or http://%s/notes.txt)" % ip)
+    except Exception as e:
+        print("Remote: start failed:", e)
+        stop_remote()
+
+def stop_remote():
+    """Tear down server + WiFi, screen back on."""
+    global remote_active, server, _mdns
+    remote_active = False
+    if server is not None:
+        try:
+            server.stop()
+        except Exception:
+            pass
+        server = None
+    _mdns = None
+    try:
+        import wifi
+        wifi.radio.enabled = False
+    except Exception:
+        pass
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+    bl.value = True
+
 # ─── Core chord logic ────────────────────────────────────────────────
 def check_chords():
     global layer, thumb_taps, last_tap_time
@@ -410,12 +524,8 @@ def check_chords():
         # Wake only on a clean press from fully-released (rising edge), so the
         # partial-release flicker of the (3,4) sleep chord doesn't re-wake it.
         if combo and last_combo == ():
-            bl.value = True               # Local mode: screen on
-            try:
-                supervisor.runtime.ble_workflow = False  # drop BLE when using locally
-            except Exception:
-                pass
-            print("Local: backlight ON, BLE OFF")
+            stop_remote()   # WiFi off (if up) + backlight back on
+            print("Backlight: ON (wake)")
             sent_release = True
             NEXT_OK      = now + DEBOUNCE_UP
         last_combo = combo
@@ -469,18 +579,15 @@ def check_chords():
         NEXT_OK = now + 0.12  # non-blocking cooldown
         return
 
-    # Special: Layer-3 chord (3,4) thumb+pinky → Remote mode:
-    # backlight OFF + BLE workflow ON for wireless notes.txt editing.
+    # Special: Layer-3 chord (3,4) thumb+pinky → toggle WiFi-sync (remote) mode
     if layer == 3 and combo == (3, 4) and combo != last_combo:
-        bl.value = False
-        try:
-            supervisor.runtime.ble_workflow = True
-            print("Remote: backlight OFF, BLE workflow ON (grippy)")
-        except Exception as e:
-            print("ble on failed:", e)
+        if bl.value:
+            start_remote()   # screen off + WiFi up + grippy.local server
+        else:
+            stop_remote()    # WiFi down + screen back on
         last_combo = combo
         sent_release = True
-        NEXT_OK = now + 0.12
+        NEXT_OK = now + 0.12  # non-blocking cooldown
         return
 
     # macOS media keys
@@ -645,5 +752,10 @@ def check_chords():
 # ─── Main loop ───────────────────────────────────────────────────────
 while True:
     check_chords()
+    if remote_active and server is not None:
+        try:
+            server.poll()
+        except Exception as e:
+            print("server poll err:", e)
     _maybe_refresh_budgeted()
     time.sleep(SCAN_LOOP)
