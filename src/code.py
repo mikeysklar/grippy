@@ -13,10 +13,28 @@ import storage
 time.sleep(0.25)
 displayio.release_displays()
 
-# --- Backlight ---
+# --- Backlight (boot dark: press any key to wake) ---
+# Start with the backlight off so the ~80mA load isn't drawn during the WiFi
+# association spike at boot — lets the 130mAh cell come up without browning out.
 bl = digitalio.DigitalInOut(board.IO13)
 bl.direction = digitalio.Direction.OUTPUT
-bl.value = True
+bl.value = False
+
+# --- Radio: WiFi off, BLE workflow off at boot (low power) ---
+# WiFi browns out the 130mAh cell (sustained ~200mA association spike), so it is
+# never used. BLE is enabled on demand by the layer-3 (3,4) chord for wireless
+# notes.txt editing — code.circuitpython.org over BLE from a Mac (Chrome), or the
+# Bluefy app on iOS. BLE resets to off on power-cycle (stays low power by default).
+import supervisor
+try:
+    import wifi
+    wifi.radio.enabled = False   # only BLE uses the 2.4GHz radio
+except Exception:
+    pass
+try:
+    supervisor.runtime.ble_workflow = False
+except Exception as e:
+    print("ble init failed:", e)
 
 # --- SPI + 4-wire display bus ---
 spi = busio.SPI(clock=board.IO8, MOSI=board.IO9)   # no MISO required
@@ -54,7 +72,7 @@ try:
 except TypeError:
     display.refresh()
 
-bl.value = True  # backlight on
+bl.value = False  # boot dark — first keypress (any layer) wakes
 
 # ─── Text buffer ─────────────────────────────────────────────────────
 text_buffer = ""
@@ -392,8 +410,12 @@ def check_chords():
         # Wake only on a clean press from fully-released (rising edge), so the
         # partial-release flicker of the (3,4) sleep chord doesn't re-wake it.
         if combo and last_combo == ():
-            bl.value     = True
-            print("Backlight: ON (wake)")
+            bl.value = True               # Local mode: screen on
+            try:
+                supervisor.runtime.ble_workflow = False  # drop BLE when using locally
+            except Exception:
+                pass
+            print("Local: backlight ON, BLE OFF")
             sent_release = True
             NEXT_OK      = now + DEBOUNCE_UP
         last_combo = combo
@@ -447,13 +469,18 @@ def check_chords():
         NEXT_OK = now + 0.12  # non-blocking cooldown
         return
 
-    # Special: Layer-3 chord (3,4) thumb+pinky → toggle backlight on/off
+    # Special: Layer-3 chord (3,4) thumb+pinky → Remote mode:
+    # backlight OFF + BLE workflow ON for wireless notes.txt editing.
     if layer == 3 and combo == (3, 4) and combo != last_combo:
-        bl.value = not bl.value
-        print("Backlight:", "ON" if bl.value else "OFF")
+        bl.value = False
+        try:
+            supervisor.runtime.ble_workflow = True
+            print("Remote: backlight OFF, BLE workflow ON (grippy)")
+        except Exception as e:
+            print("ble on failed:", e)
         last_combo = combo
         sent_release = True
-        NEXT_OK = now + 0.12  # non-blocking cooldown
+        NEXT_OK = now + 0.12
         return
 
     # macOS media keys
