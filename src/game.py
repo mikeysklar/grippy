@@ -38,19 +38,29 @@ for _chord, _kc in chords_config.num_nav.items():
     if _c and _c.isdigit():
         _NUM_CHORD[_c] = _chord
 
+# space is its own chord (alpha (0,2,3)); derived so it tracks the live map
+_SPACE_CHORD = None
+for _chord, _kc in chords_config.alpha.items():
+    if _kc == chords_config.Keycode.SPACE:
+        _SPACE_CHORD = _chord
+        break
+
 def _chord_for(ch):
+    if ch == ' ':
+        return _SPACE_CHORD
     if ch.isdigit():
         return _NUM_CHORD.get(ch)
     return _LETTER_CHORD.get(ch.upper())
 
 def _pattern(chord):
-    """Render a chord as a 5-slot finger map: 4 fingers + space + thumb.
-    e.g. E=(0,) -> '#--- -',  M=(0,4) -> '#--- #'."""
+    """Render a chord as a 5-slot finger map: thumb + space + 4 fingers.
+    Thumb is on the left to match the physical orientation of the thumb key.
+    e.g. E=(0,) -> '- #---',  M=(0,4) -> '# #---'."""
     if not chord:
         return "?"
     fingers = "".join("#" if i in chord else "-" for i in range(4))
     thumb = "#" if 4 in chord else "-"
-    return fingers + " " + thumb
+    return thumb + " " + fingers
 
 # ─── content: stages walked by Guided + Hint, words used by Timed ────
 # Letters grouped by chord size (= difficulty = ~frequency, since the alpha
@@ -65,9 +75,22 @@ _STAGES = [
     ("N2", "567890"),     # number combos
 ]
 
-_WORDS = [
-    "CAT", "DOG", "SUN", "RUN", "TOP", "TEN", "SEA", "ONE", "RED", "SIT",
-    "NOT", "TOE", "EAR", "LINE", "RAIN", "NOTE", "STAR", "CANE", "TONE", "SAIL",
+# Timed mode types whole phrases (Monkeytype-style): several short common
+# words + spaces, for realistic speed practice. Lowercase, letters + spaces
+# only; each wraps to <=3 rows of 10 chars.
+_PHRASES = [
+    "the cat ran to the sun",
+    "we sit in the red car",
+    "a dog and a cat play",
+    "she had a cup of tea",
+    "run to the top of it",
+    "he put the box on it",
+    "let us go for a walk",
+    "i can see the big sun",
+    "the man sat on a log",
+    "we go up the big hill",
+    "the sea is far from us",
+    "a red bus is on the way",
 ]
 
 # ─── state ───────────────────────────────────────────────────────────
@@ -84,12 +107,14 @@ _cleared = 0             # chars cleared in this stage
 _stage_total = 0
 _miss = False            # last attempt was wrong (reveal pattern in hint mode)
 
-# timed
-_word_idx = 0
-_wpos = 0
+# timed (phrase typing)
+_W = 10                  # display columns (mirrors code.py COLS) for wrapping
+_phrase_idx = 0
+_cpos = 0                # index of the next char to type in the phrase
 _t0 = 0.0
-_last_word_time = 0.0
-_word_errors = 0
+_last_time = 0.0
+_last_wpm = 0
+_errors = 0
 
 def _now():
     return time.monotonic()
@@ -192,40 +217,65 @@ def _handle_drill(use):
 
 # ─── timed words ─────────────────────────────────────────────────────
 def _start_timed():
-    global _phase, _mode, _word_idx, _wpos, _t0, _word_errors
+    global _phase, _mode, _phrase_idx, _cpos, _t0, _errors
     _phase = "play"
     _mode = "timed"
-    _word_idx = 0
-    _wpos = 0
-    _word_errors = 0
+    _phrase_idx = 0
+    _cpos = 0
+    _errors = 0
     _t0 = _now()
     return _timed_lines()
 
+def _wrap(s, width, max_rows):
+    """Word-wrap s into <=max_rows lines of <=width chars (break at spaces)."""
+    rows = []
+    cur = ""
+    for w in s.split(" "):
+        cand = w if cur == "" else cur + " " + w
+        if len(cand) <= width:
+            cur = cand
+        else:
+            rows.append(cur)
+            cur = w
+    if cur:
+        rows.append(cur)
+    while len(rows) < max_rows:
+        rows.append("")
+    return rows[:max_rows]
+
 def _timed_lines(done_time=None):
-    if _word_idx >= len(_WORDS):
-        return ["", " FINISHED", "all words", "", "Back=menu"]
-    word = _WORDS[_word_idx]
-    typed = word[:_wpos] + "." * (len(word) - _wpos)
+    if _phrase_idx >= len(_PHRASES):
+        # whole set finished — show the last result
+        return ["", " FINISHED", "%dwpm" % _last_wpm, "", "Back=menu"]
+    phrase = _PHRASES[_phrase_idx]
+    # typed chars uppercase, remaining lowercase — the case edge is the caret
+    marked = "".join(c.upper() if i < _cpos else c
+                     for i, c in enumerate(phrase))
+    r0, r1, r2 = _wrap(marked, _W, 3)
+    head = "%d/%d %.1fs" % (_phrase_idx + 1, len(_PHRASES), _now() - _t0)
     if done_time is not None:
-        foot = "%.1fs ok" % done_time
+        wpm = int(round(len(phrase) * 12.0 / done_time)) if done_time > 0 else 0
+        foot = "%dwpm" % wpm
     else:
-        foot = "%.1fs" % (_now() - _t0)
-    return ["word %d" % (_word_idx + 1), " " + word, " " + typed, "", foot]
+        nxt = phrase[_cpos] if _cpos < len(phrase) else " "
+        foot = "next: " + ("_" if nxt == " " else nxt)
+    return [head[:_W], r0, r1, r2, foot[:_W]]
 
 def _handle_timed(use):
-    global _word_idx, _wpos, _t0, _last_word_time, _word_errors
-    if _word_idx >= len(_WORDS):
+    global _phrase_idx, _cpos, _t0, _last_time, _last_wpm, _errors
+    if _phrase_idx >= len(_PHRASES):
         return _timed_lines()
-    word = _WORDS[_word_idx]
-    expected = _chord_for(word[_wpos])
-    if use == expected:
-        _wpos += 1
-        if _wpos >= len(word):
-            _last_word_time = _now() - _t0
-            _word_idx += 1
-            _wpos = 0
+    phrase = _PHRASES[_phrase_idx]
+    if use == _chord_for(phrase[_cpos]):
+        _cpos += 1
+        if _cpos >= len(phrase):
+            _last_time = _now() - _t0
+            _last_wpm = (int(round(len(phrase) * 12.0 / _last_time))
+                         if _last_time > 0 else 0)
+            _phrase_idx += 1
+            _cpos = 0
             _t0 = _now()
-            return _timed_lines(done_time=_last_word_time)
+            return _timed_lines(done_time=_last_time)
         return _timed_lines()
-    _word_errors += 1
+    _errors += 1
     return _timed_lines()   # wrong chord: ignore, keep going

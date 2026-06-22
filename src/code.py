@@ -116,6 +116,10 @@ thumb_taps       = 0
 tap_in_prog      = False
 thumb_down_at    = 0.0
 long_hold_fired  = False
+thumb_gesture    = False   # True only while the thumb is held ALONE from rest;
+                           # a lone (4,) reached by releasing a chord's fingers
+                           # is NOT a gesture (it's a chord tail) and must reach
+                           # the typing/game handler instead of switching layer.
 last_tap_time    = 0.0
 last_combo       = ()
 pending_combo    = None
@@ -525,7 +529,7 @@ def stop_remote():
 
 # ─── Core chord logic ────────────────────────────────────────────────
 def check_chords():
-    global layer, thumb_taps, last_tap_time, thumb_down_at, long_hold_fired
+    global layer, thumb_taps, last_tap_time, thumb_down_at, long_hold_fired, thumb_gesture
     global last_combo, pending_combo, sent_release, skip_scag, scag_skip_combo
     global modifier_armed, held_modifier, last_time, last_repeat, accel_active
     global held_nav_combo, last_nav, held_combo, last_pending_combo
@@ -562,39 +566,62 @@ def check_chords():
         last_combo = combo
         return
 
+    # The thumb-only gesture is only real when the thumb is pressed ALONE from
+    # rest. The instant any non-thumb finger is involved we're in a chord, so
+    # disarm the gesture — a later lone (4,) is then just the tail of releasing
+    # that chord and must reach the typing/game handler, not switch layers.
+    if any(i != 4 for i in combo):
+        thumb_gesture = False
+
     # A) Thumb-only gesture.
     #    Short tap(s) → typing layer: 1=alpha, 2=numeric, 3=delim, 4=scag.
     #    Long-hold (≥ LONG_HOLD_MENU) → jump to the menu, auto-saving any
     #    in-progress note. Short taps never reach the menu, so hopping layers /
     #    using thumb-chords never commits a note.
     if combo == (4,):
-        if last_combo != (4,):
+        if last_combo == ():
+            # clean rising edge from rest → a genuine thumb-only gesture begins
             thumb_down_at   = now
             long_hold_fired = False
-        elif (not long_hold_fired) and (now - thumb_down_at) >= LONG_HOLD_MENU:
-            long_hold_fired = True
-            layer           = 1
-            thumb_taps      = 0
-            pending_combo   = None
-            sent_release    = False
-            skip_scag       = False
-            modifier_armed  = False
-            held_modifier   = None
-            scag_skip_combo = None
-            viewer_mode     = False
-            clear_mode      = False
-            game_mode       = False
-            confirm_clear_all = False
-            if text_buffer:
-                save_entry()      # auto-save the in-progress note on the way home
-            print("→ menu (long-hold)")
-            render_menu()
-        last_combo = combo
-        return
+            thumb_gesture   = True
+        # A lone (4,) that is NOT a gesture is a chord tail (e.g. (0,4)->(4,)):
+        # fall through to the normal handler so the game/typing layer still
+        # receives the chord on release.
+        if thumb_gesture:
+            if (not long_hold_fired) and (now - thumb_down_at) >= LONG_HOLD_MENU:
+                long_hold_fired = True
+                layer           = 1
+                thumb_taps      = 0
+                pending_combo   = None
+                sent_release    = False
+                skip_scag       = False
+                modifier_armed  = False
+                held_modifier   = None
+                scag_skip_combo = None
+                viewer_mode     = False
+                clear_mode      = False
+                game_mode       = False
+                confirm_clear_all = False
+                if text_buffer:
+                    save_entry()  # auto-save the in-progress note on the way home
+                print("→ menu (long-hold)")
+                render_menu()
+            last_combo = combo
+            return
 
-    if last_combo == (4,) and combo == ():
+    # Thumb released after a genuine thumb-only gesture: long-hold already
+    # acted (consume it); a short tap selects a typing layer. A chord tail
+    # (thumb_gesture False) skips this so releasing a thumb-chord never
+    # switches layers or exits the game.
+    if last_combo == (4,) and combo == () and thumb_gesture:
+        thumb_gesture = False
         if long_hold_fired:
             long_hold_fired = False          # menu already entered; consume release
+        elif game_mode:
+            # In the game, layers are meaningless — drills accept the raw chord
+            # directly (numbers are finger-only, no layer switch needed). So a
+            # thumb tap is consumed but ignored; only a long-hold exits.
+            pass
         else:
             # short tap → select typing layer (1 tap == alpha == layer 2)
             if now - last_tap_time < TAP_WINDOW:
