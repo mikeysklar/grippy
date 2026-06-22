@@ -9,6 +9,7 @@ import terminalio
 from adafruit_display_text import bitmap_label as label
 import chords_config
 import storage
+import webserver
 
 time.sleep(0.25)
 displayio.release_displays()
@@ -591,125 +592,22 @@ def handle_clear_input(use):
 # Boot stays WiFi-off (no boot connect → no association brownout). The
 # "WiFi Sync" menu item turns the screen OFF and brings WiFi up only then,
 # so the backlight (~80 mA) and the WiFi association spike never overlap.
-remote_active = False
-server = None
-_mdns   = None
-
-def _load_wifi_conf(path="/wifi.conf"):
-    ssid = pw = None
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip().upper()
-                v = v.strip().strip('"').strip("'")
-                if k == "SSID":
-                    ssid = v
-                elif k == "PASSWORD":
-                    pw = v
-    except OSError:
-        pass
-    return ssid, pw
+# The networking lives in webserver.py; backlight ordering lives here.
 
 def start_remote():
     """Screen off → WiFi up → serve notes.txt at grippy.local."""
-    global remote_active, server, _mdns
     # Screen off FIRST so backlight + WiFi association never overlap.
     bl.value = False
     try:
         display.refresh(minimum_frames_per_second=0)
     except Exception:
         pass
-
-    ssid, pw = _load_wifi_conf()
-    if not ssid:
-        print("Remote: no SSID in wifi.conf; aborting")
+    if not webserver.start():     # WiFi failed → screen back on
         bl.value = True
-        return
-
-    import wifi
-    import socketpool
-    import mdns
-    from adafruit_httpserver import Server, Response
-    try:
-        # Clean radio cycle before connect — a half-open radio throws
-        # "Unknown failure 2". Off → settle → on → settle, then connect.
-        wifi.radio.enabled = False
-        time.sleep(1)
-        wifi.radio.enabled = True
-        time.sleep(0.5)
-        try:
-            wifi.radio.tx_power = 11   # dBm — trim the association current spike
-        except Exception:
-            pass
-        print("Remote: connecting to", ssid)
-        for attempt in range(4):
-            try:
-                wifi.radio.connect(ssid, pw)
-                break
-            except Exception as e:
-                print("Remote: connect retry", attempt, e)
-                time.sleep(2)
-        ip = str(wifi.radio.ipv4_address)
-        if ip == "None":
-            raise RuntimeError("no IP after connect")
-        print("Remote: connected", ip, "tx_power", wifi.radio.tx_power)
-
-        _mdns = mdns.Server(wifi.radio)
-        _mdns.hostname = "grippy"
-        _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
-
-        pool = socketpool.SocketPool(wifi.radio)
-        srv = Server(pool, "/", debug=False)
-
-        def _serve_notes(request):
-            try:
-                with open("/notes.txt") as f:
-                    data = f.read()
-            except OSError:
-                data = ""
-            return Response(request, data, content_type="text/plain")
-
-        srv.route("/")(_serve_notes)
-        srv.route("/notes.txt")(_serve_notes)
-
-        srv.start(ip, port=80)
-        server = srv
-        remote_active = True
-        try:
-            import gc
-            print("Remote: mem_free", gc.mem_free())
-        except Exception:
-            pass
-        print("Remote: http://grippy.local/notes.txt  (or http://%s/notes.txt)" % ip)
-    except Exception as e:
-        print("Remote: start failed:", e)
-        stop_remote()
 
 def stop_remote():
     """Tear down server + WiFi, screen back on."""
-    global remote_active, server, _mdns
-    remote_active = False
-    if server is not None:
-        try:
-            server.stop()
-        except Exception:
-            pass
-        server = None
-    _mdns = None
-    try:
-        import wifi
-        wifi.radio.enabled = False
-    except Exception:
-        pass
-    try:
-        import gc
-        gc.collect()
-    except Exception:
-        pass
+    webserver.stop()
     bl.value = True
 
 # ─── Core chord logic ────────────────────────────────────────────────
@@ -907,10 +805,6 @@ _maybe_refresh_budgeted()
 
 while True:
     check_chords()
-    if remote_active and server is not None:
-        try:
-            server.poll()
-        except Exception as e:
-            print("server poll err:", e)
+    webserver.poll()
     _maybe_refresh_budgeted()
     time.sleep(SCAN_LOOP)
