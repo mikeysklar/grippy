@@ -10,6 +10,7 @@ from adafruit_display_text import bitmap_label as label
 import chords_config
 import webserver
 import notes
+import game
 
 time.sleep(0.25)
 displayio.release_displays()
@@ -144,13 +145,14 @@ typing_offset = 0
 # ─── Menu / sub-mode state ───────────────────────────────────────────
 # A note auto-saves on the long-hold back to the menu (the only way home),
 # so layer switches never commit and there's no separate Save item.
-_BASE_MENU = ["New Note", "View Note", "WiFi Sync", "Clr Note", "Clr All", "HID"]
+_BASE_MENU = ["New Note", "View Note", "Game", "WiFi Sync", "Clr Note", "Clr All", "HID"]
 menu_idx          = 0
 menu_top          = 0
 confirm_clear_all = False
 clear_mode        = False     # "Clr Note" picker active
 clear_idx         = 0
 clear_top         = 0
+game_mode         = False     # chord-trainer (game.py) active
 
 # ─── Text window geometry for ST7789 ─────────────────────────────────
 SCALE   = 4
@@ -351,6 +353,8 @@ def menu_activate():
         render_typing_window()
     elif item == "View Note":
         enter_viewer()
+    elif item == "Game":
+        enter_game()              # chord trainer
     elif item == "WiFi Sync":
         start_remote()            # screen off + WiFi up
     elif item == "Clr Note":
@@ -472,6 +476,31 @@ def handle_clear_input(use):
                 clear_idx = len(entries) - 1
             render_clear_list()
 
+# ─── Game (chord trainer) — logic in game.py ─────────────────────────
+def _draw_lines(lines):
+    """Blit a list of up to ROWS strings (game.py's display bridge)."""
+    global NEEDS_REFRESH
+    dirty = False
+    for r in range(ROWS):
+        s = lines[r] if r < len(lines) else ""
+        dirty |= _set_line(r, s[:COLS])
+    if dirty:
+        NEEDS_REFRESH = True
+
+def enter_game():
+    global game_mode
+    game_mode = True
+    _draw_lines(game.start())
+
+def handle_game_input(use):
+    global game_mode
+    r = game.handle(use)
+    if r == "EXIT":
+        game_mode = False
+        render_menu()
+    else:
+        _draw_lines(r)
+
 # ─── WiFi sync (remote) mode ─────────────────────────────────────────
 # Boot stays WiFi-off (no boot connect → no association brownout). The
 # "WiFi Sync" menu item turns the screen OFF and brings WiFi up only then,
@@ -502,7 +531,7 @@ def check_chords():
     global held_nav_combo, last_nav, held_combo, last_pending_combo
     global held_scroll_combo, last_scroll, text_buffer
     global usbmode, typing_offset, NEXT_OK
-    global viewer_mode, confirm_clear_all, clear_mode
+    global viewer_mode, confirm_clear_all, clear_mode, game_mode
 
     now = time.monotonic()
     if now < NEXT_OK:
@@ -526,6 +555,7 @@ def check_chords():
             thumb_taps   = 1
             viewer_mode  = False
             clear_mode   = False
+            game_mode    = False
             render_menu()
             sent_release = True
             NEXT_OK      = now + DEBOUNCE_UP
@@ -553,6 +583,7 @@ def check_chords():
             scag_skip_combo = None
             viewer_mode     = False
             clear_mode      = False
+            game_mode       = False
             confirm_clear_all = False
             if text_buffer:
                 save_entry()      # auto-save the in-progress note on the way home
@@ -575,6 +606,7 @@ def check_chords():
             print("→ layer-%d" % layer)
             viewer_mode = False
             clear_mode = False
+            game_mode = False
             confirm_clear_all = False
             render_typing_window()
         pending_combo   = None
@@ -611,6 +643,8 @@ def check_chords():
                     handle_clear_input(use)
                 elif viewer_mode:
                     handle_viewer_input(use)
+                elif game_mode:
+                    handle_game_input(use)
                 else:
                     handle_menu_input(use)
             sent_release = True
