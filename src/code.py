@@ -8,7 +8,8 @@ from adafruit_st7789 import ST7789
 import terminalio
 from adafruit_display_text import bitmap_label as label
 import chords_config
-import storage
+import webserver
+import notes
 
 time.sleep(0.25)
 displayio.release_displays()
@@ -157,7 +158,6 @@ GLYPH_W = 6 * SCALE          # terminalio glyph is 6x8
 GLYPH_H = 8 * SCALE
 COLS    = 10                 # ~10 chars/row at scale=4 fits well
 ROWS    = 5                  # 5 rows on screen
-WINDOW_SIZE = COLS * ROWS
 LEFT, TOP = 20, 0
 LINE_SPACING = 11            # extra pixels between rows
 
@@ -223,88 +223,18 @@ def render_typing_window():
     if dirty:
         NEEDS_REFRESH = True
 
-# ─── Save-to-file config ──────────────────────────────────────────────
-SAVE_PATH = "/notes.txt"
-
-def _insert_code():
-    try:
-        from adafruit_hid.keycode import Keycode
-        return Keycode.INSERT
-    except Exception:
-        return 73  # HID usage ID for Insert
-
-INSERT_CODE = _insert_code()
-
-def ensure_writable():
-    try:
-        with open("/.__rw_test__", "w") as _t:
-            _t.write("x")
-        try:
-            import os
-            os.remove("/.__rw_test__")
-        except Exception:
-            pass
-        return True
-    except OSError:
-        try:
-            storage.remount("/", False)  # False => read-write
-            return True
-        except Exception as e:
-            print("Remount failed:", e)
-            return False
-
+# ─── Save-to-file (note storage lives in notes.py) ───────────────────
 def save_entry():
     global text_buffer
-    entry = text_buffer.rstrip("\n")
-    path = "/notes.txt"
-    if not ensure_writable():
-        print("Save aborted: filesystem still read-only")
-        return
-    try:
-        with open(path, "a") as f:
-            if entry:
-                f.write(entry + ",\n")
-            else:
-                f.write(",\n")
-        try:
-            storage.sync()
-        except Exception:
-            pass
-        print(f"Saved {len(entry)} chars to {path}")
+    if notes.append_entry(text_buffer.rstrip("\n")):
         text_buffer = ""
         render_typing_window()
-    except OSError as e:
-        print("Save failed:", e)
 
 # ─── viewer mode ───────────────────────────────────────────────
-def _kc(vname, fallback):
-    try:
-        from adafruit_hid.keycode import Keycode
-        return getattr(Keycode, vname)
-    except Exception:
-        return fallback
-
-KC_PAGE_UP   = _kc("PAGE_UP",   75)
-KC_PAGE_DOWN = _kc("PAGE_DOWN", 78)
-KC_UP        = _kc("UP_ARROW",  82)
-KC_DOWN      = _kc("DOWN_ARROW",81)
-
 def load_entries():
     global entries, entry_idx, entry_offset
-    try:
-        with open(SAVE_PATH, "r") as f:
-            data = f.read().replace("\r\n", "\n")
-    except OSError:
-        entries = []
-        entry_idx = 0
-        entry_offset = 0
-        return
-    parts = data.split(",\n")
-    if parts and parts[-1] == "":
-        parts.pop()
-    filtered = [p.rstrip("\r\n") for p in parts if p.strip() != ""]
-    entries = filtered
-    entry_idx = 0 if entries else 0
+    entries = notes.read_entries()
+    entry_idx = 0
     entry_offset = 0
 
 def render_entry_window():
@@ -336,31 +266,6 @@ def enter_viewer():
     if d: NEEDS_REFRESH = True
     load_entries()
     viewer_mode = True
-    render_entry_window()
-
-def handle_page_nav(kc):
-    global entry_idx, entry_offset
-    if not entries:
-        render_entry_window()
-        return
-    if kc == KC_PAGE_UP:
-        entry_idx = (entry_idx - 1) % len(entries)
-    elif kc == KC_PAGE_DOWN:
-        entry_idx = (entry_idx + 1) % len(entries)
-    entry_offset = 0
-    render_entry_window()
-
-def handle_intra_scroll(kc):
-    global entry_offset
-    if not entries:
-        render_entry_window()
-        return
-    s = entries[entry_idx]
-    max_off = max(0, len(s) - WINDOW_SIZE)
-    if kc == KC_UP:
-        entry_offset = max(0, entry_offset - COLS)
-    elif kc == KC_DOWN:
-        entry_offset = min(max_off, entry_offset + COLS)
     render_entry_window()
 
 def _update_last_char_only():
@@ -429,19 +334,8 @@ def render_menu():
         NEEDS_REFRESH = True
 
 def clear_all_notes():
-    if not ensure_writable():
-        print("Clear-all aborted: filesystem read-only")
-        return
-    try:
-        with open("/notes.txt", "w") as f:
-            f.write("")
-        try:
-            storage.sync()
-        except Exception:
-            pass
+    if notes.write_entries([]):
         print("notes.txt emptied")
-    except OSError as e:
-        print("Clear-all failed:", e)
 
 def menu_activate():
     """Run the highlighted menu item."""
@@ -545,24 +439,15 @@ def enter_clear():
     render_clear_list()
 
 def delete_entry(idx):
-    """Rewrite notes.txt without entry idx."""
+    """Rewrite notes.txt without entry idx (restores the list if write fails)."""
     if not (0 <= idx < len(entries)):
         return
-    if not ensure_writable():
-        print("Delete aborted: filesystem read-only")
-        return
+    removed = entries[idx]
     del entries[idx]
-    try:
-        with open("/notes.txt", "w") as f:
-            for e in entries:
-                f.write(e + ",\n")
-        try:
-            storage.sync()
-        except Exception:
-            pass
+    if notes.write_entries(entries):
         print("Deleted entry", idx)
-    except OSError as e:
-        print("Delete failed:", e)
+    else:
+        entries.insert(idx, removed)   # write failed (read-only) → undo
 
 def handle_clear_input(use):
     global clear_mode, clear_idx
@@ -591,125 +476,22 @@ def handle_clear_input(use):
 # Boot stays WiFi-off (no boot connect → no association brownout). The
 # "WiFi Sync" menu item turns the screen OFF and brings WiFi up only then,
 # so the backlight (~80 mA) and the WiFi association spike never overlap.
-remote_active = False
-server = None
-_mdns   = None
-
-def _load_wifi_conf(path="/wifi.conf"):
-    ssid = pw = None
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip().upper()
-                v = v.strip().strip('"').strip("'")
-                if k == "SSID":
-                    ssid = v
-                elif k == "PASSWORD":
-                    pw = v
-    except OSError:
-        pass
-    return ssid, pw
+# The networking lives in webserver.py; backlight ordering lives here.
 
 def start_remote():
     """Screen off → WiFi up → serve notes.txt at grippy.local."""
-    global remote_active, server, _mdns
     # Screen off FIRST so backlight + WiFi association never overlap.
     bl.value = False
     try:
         display.refresh(minimum_frames_per_second=0)
     except Exception:
         pass
-
-    ssid, pw = _load_wifi_conf()
-    if not ssid:
-        print("Remote: no SSID in wifi.conf; aborting")
+    if not webserver.start():     # WiFi failed → screen back on
         bl.value = True
-        return
-
-    import wifi
-    import socketpool
-    import mdns
-    from adafruit_httpserver import Server, Response
-    try:
-        # Clean radio cycle before connect — a half-open radio throws
-        # "Unknown failure 2". Off → settle → on → settle, then connect.
-        wifi.radio.enabled = False
-        time.sleep(1)
-        wifi.radio.enabled = True
-        time.sleep(0.5)
-        try:
-            wifi.radio.tx_power = 11   # dBm — trim the association current spike
-        except Exception:
-            pass
-        print("Remote: connecting to", ssid)
-        for attempt in range(4):
-            try:
-                wifi.radio.connect(ssid, pw)
-                break
-            except Exception as e:
-                print("Remote: connect retry", attempt, e)
-                time.sleep(2)
-        ip = str(wifi.radio.ipv4_address)
-        if ip == "None":
-            raise RuntimeError("no IP after connect")
-        print("Remote: connected", ip, "tx_power", wifi.radio.tx_power)
-
-        _mdns = mdns.Server(wifi.radio)
-        _mdns.hostname = "grippy"
-        _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
-
-        pool = socketpool.SocketPool(wifi.radio)
-        srv = Server(pool, "/", debug=False)
-
-        def _serve_notes(request):
-            try:
-                with open("/notes.txt") as f:
-                    data = f.read()
-            except OSError:
-                data = ""
-            return Response(request, data, content_type="text/plain")
-
-        srv.route("/")(_serve_notes)
-        srv.route("/notes.txt")(_serve_notes)
-
-        srv.start(ip, port=80)
-        server = srv
-        remote_active = True
-        try:
-            import gc
-            print("Remote: mem_free", gc.mem_free())
-        except Exception:
-            pass
-        print("Remote: http://grippy.local/notes.txt  (or http://%s/notes.txt)" % ip)
-    except Exception as e:
-        print("Remote: start failed:", e)
-        stop_remote()
 
 def stop_remote():
     """Tear down server + WiFi, screen back on."""
-    global remote_active, server, _mdns
-    remote_active = False
-    if server is not None:
-        try:
-            server.stop()
-        except Exception:
-            pass
-        server = None
-    _mdns = None
-    try:
-        import wifi
-        wifi.radio.enabled = False
-    except Exception:
-        pass
-    try:
-        import gc
-        gc.collect()
-    except Exception:
-        pass
+    webserver.stop()
     bl.value = True
 
 # ─── Core chord logic ────────────────────────────────────────────────
@@ -907,10 +689,6 @@ _maybe_refresh_budgeted()
 
 while True:
     check_chords()
-    if remote_active and server is not None:
-        try:
-            server.poll()
-        except Exception as e:
-            print("server poll err:", e)
+    webserver.poll()
     _maybe_refresh_budgeted()
     time.sleep(SCAN_LOOP)
