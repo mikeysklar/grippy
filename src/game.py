@@ -44,13 +44,14 @@ def _chord_for(ch):
     return _LETTER_CHORD.get(ch.upper())
 
 def _pattern(chord):
-    """Render a chord as a 5-slot finger map: 4 fingers + space + thumb.
-    e.g. E=(0,) -> '#--- -',  M=(0,4) -> '#--- #'."""
+    """Render a chord as a 5-slot finger map: thumb + space + 4 fingers.
+    Thumb is on the left to match the physical orientation of the thumb key.
+    e.g. E=(0,) -> '- #---',  M=(0,4) -> '# #---'."""
     if not chord:
         return "?"
     fingers = "".join("#" if i in chord else "-" for i in range(4))
     thumb = "#" if 4 in chord else "-"
-    return fingers + " " + thumb
+    return thumb + " " + fingers
 
 # ─── content: stages walked by Guided + Hint, words used by Timed ────
 # Letters grouped by chord size (= difficulty = ~frequency, since the alpha
