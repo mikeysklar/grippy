@@ -8,8 +8,8 @@ from adafruit_st7789 import ST7789
 import terminalio
 from adafruit_display_text import bitmap_label as label
 import chords_config
-import storage
 import webserver
+import notes
 
 time.sleep(0.25)
 displayio.release_displays()
@@ -158,7 +158,6 @@ GLYPH_W = 6 * SCALE          # terminalio glyph is 6x8
 GLYPH_H = 8 * SCALE
 COLS    = 10                 # ~10 chars/row at scale=4 fits well
 ROWS    = 5                  # 5 rows on screen
-WINDOW_SIZE = COLS * ROWS
 LEFT, TOP = 20, 0
 LINE_SPACING = 11            # extra pixels between rows
 
@@ -224,88 +223,18 @@ def render_typing_window():
     if dirty:
         NEEDS_REFRESH = True
 
-# ─── Save-to-file config ──────────────────────────────────────────────
-SAVE_PATH = "/notes.txt"
-
-def _insert_code():
-    try:
-        from adafruit_hid.keycode import Keycode
-        return Keycode.INSERT
-    except Exception:
-        return 73  # HID usage ID for Insert
-
-INSERT_CODE = _insert_code()
-
-def ensure_writable():
-    try:
-        with open("/.__rw_test__", "w") as _t:
-            _t.write("x")
-        try:
-            import os
-            os.remove("/.__rw_test__")
-        except Exception:
-            pass
-        return True
-    except OSError:
-        try:
-            storage.remount("/", False)  # False => read-write
-            return True
-        except Exception as e:
-            print("Remount failed:", e)
-            return False
-
+# ─── Save-to-file (note storage lives in notes.py) ───────────────────
 def save_entry():
     global text_buffer
-    entry = text_buffer.rstrip("\n")
-    path = "/notes.txt"
-    if not ensure_writable():
-        print("Save aborted: filesystem still read-only")
-        return
-    try:
-        with open(path, "a") as f:
-            if entry:
-                f.write(entry + ",\n")
-            else:
-                f.write(",\n")
-        try:
-            storage.sync()
-        except Exception:
-            pass
-        print(f"Saved {len(entry)} chars to {path}")
+    if notes.append_entry(text_buffer.rstrip("\n")):
         text_buffer = ""
         render_typing_window()
-    except OSError as e:
-        print("Save failed:", e)
 
 # ─── viewer mode ───────────────────────────────────────────────
-def _kc(vname, fallback):
-    try:
-        from adafruit_hid.keycode import Keycode
-        return getattr(Keycode, vname)
-    except Exception:
-        return fallback
-
-KC_PAGE_UP   = _kc("PAGE_UP",   75)
-KC_PAGE_DOWN = _kc("PAGE_DOWN", 78)
-KC_UP        = _kc("UP_ARROW",  82)
-KC_DOWN      = _kc("DOWN_ARROW",81)
-
 def load_entries():
     global entries, entry_idx, entry_offset
-    try:
-        with open(SAVE_PATH, "r") as f:
-            data = f.read().replace("\r\n", "\n")
-    except OSError:
-        entries = []
-        entry_idx = 0
-        entry_offset = 0
-        return
-    parts = data.split(",\n")
-    if parts and parts[-1] == "":
-        parts.pop()
-    filtered = [p.rstrip("\r\n") for p in parts if p.strip() != ""]
-    entries = filtered
-    entry_idx = 0 if entries else 0
+    entries = notes.read_entries()
+    entry_idx = 0
     entry_offset = 0
 
 def render_entry_window():
@@ -337,31 +266,6 @@ def enter_viewer():
     if d: NEEDS_REFRESH = True
     load_entries()
     viewer_mode = True
-    render_entry_window()
-
-def handle_page_nav(kc):
-    global entry_idx, entry_offset
-    if not entries:
-        render_entry_window()
-        return
-    if kc == KC_PAGE_UP:
-        entry_idx = (entry_idx - 1) % len(entries)
-    elif kc == KC_PAGE_DOWN:
-        entry_idx = (entry_idx + 1) % len(entries)
-    entry_offset = 0
-    render_entry_window()
-
-def handle_intra_scroll(kc):
-    global entry_offset
-    if not entries:
-        render_entry_window()
-        return
-    s = entries[entry_idx]
-    max_off = max(0, len(s) - WINDOW_SIZE)
-    if kc == KC_UP:
-        entry_offset = max(0, entry_offset - COLS)
-    elif kc == KC_DOWN:
-        entry_offset = min(max_off, entry_offset + COLS)
     render_entry_window()
 
 def _update_last_char_only():
@@ -430,19 +334,8 @@ def render_menu():
         NEEDS_REFRESH = True
 
 def clear_all_notes():
-    if not ensure_writable():
-        print("Clear-all aborted: filesystem read-only")
-        return
-    try:
-        with open("/notes.txt", "w") as f:
-            f.write("")
-        try:
-            storage.sync()
-        except Exception:
-            pass
+    if notes.write_entries([]):
         print("notes.txt emptied")
-    except OSError as e:
-        print("Clear-all failed:", e)
 
 def menu_activate():
     """Run the highlighted menu item."""
@@ -546,24 +439,15 @@ def enter_clear():
     render_clear_list()
 
 def delete_entry(idx):
-    """Rewrite notes.txt without entry idx."""
+    """Rewrite notes.txt without entry idx (restores the list if write fails)."""
     if not (0 <= idx < len(entries)):
         return
-    if not ensure_writable():
-        print("Delete aborted: filesystem read-only")
-        return
+    removed = entries[idx]
     del entries[idx]
-    try:
-        with open("/notes.txt", "w") as f:
-            for e in entries:
-                f.write(e + ",\n")
-        try:
-            storage.sync()
-        except Exception:
-            pass
+    if notes.write_entries(entries):
         print("Deleted entry", idx)
-    except OSError as e:
-        print("Delete failed:", e)
+    else:
+        entries.insert(idx, removed)   # write failed (read-only) → undo
 
 def handle_clear_input(use):
     global clear_mode, clear_idx
