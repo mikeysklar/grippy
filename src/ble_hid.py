@@ -8,19 +8,27 @@
 # Heavy imports (adafruit_ble) are done lazily in start() so the ~35 KB BLE
 # stack is only paid for when the user actually turns BLE on.
 #
-# ⚠️ KNOWN LIMITATION (CircuitPython 10.2.x on ESP32-S3): enabling BLE from the
-# menu currently fails with `BluetoothError: Unknown system firmware error: 519`.
-# 519 = 0x207 = NimBLE HCI base + 0x07 = "Memory Capacity Exceeded": the BLE
-# controller runs out of memory when start_advertising() is called from inside
-# code.py (display + WiFi-init resident, fragmented heap). The same code works
-# from the REPL (clean heap). The fix is adafruit/circuitpython PR #11036
-# (merged 2026-06-09), which is NOT in 10.2.0/10.2.1 — it ships in 10.3.0+.
-# Until then BLE is shelved; it should work once the board is on a build with
-# that fix. Needs `circup install adafruit_ble` (device-local, not in repo).
+# Needs `circup install adafruit_ble` (device-local lib, not in repo).
+#
+# FIRMWARE NOTE (ESP32-S3): BLE HID works on **CircuitPython 10.3.0-alpha.2+**.
+#  - On 10.2.x it failed with "Unknown system firmware error: 519" (= NimBLE HCI
+#    "Memory Capacity Exceeded") — a controller OOM when advertising from inside
+#    code.py. Fixed upstream by adafruit/circuitpython PR #11036 (in 10.3.0+).
+#  - On 10.3.x's NimBLE 6.0.1 the "advertise forever" default (timeout None/0) is
+#    rejected with "Invalid BLE parameter", and the advertising duration is
+#    capped (~60-80s). So we advertise in finite 60s windows re-armed by poll()
+#    (see _ADV_TIMEOUT below). This is the key to making it work on 10.3.x.
 import gc
 import time
 
 _KEYBOARD_APPEARANCE = 961   # 0x03C1 — GAP "HID Keyboard", so hosts pair it as one
+# Advertise for a finite window, re-armed by poll(). On NimBLE 6.0.1 (CP 10.3.x)
+# the "advertise forever" default (timeout None / 0) is rejected with "Invalid
+# BLE parameter", and the duration is capped (~60-80s; 60 works, 90 fails), so
+# we advertise in 60s windows and poll() re-arms. Stays discoverable until a
+# host connects.
+_ADV_TIMEOUT = 60
+_last_adv = 0.0   # monotonic time of last start_advertising (poll() rate-limit)
 
 _ble = None     # adafruit_ble.BLERadio
 _hid = None     # HIDService
@@ -31,7 +39,7 @@ _bat = None     # BatteryService     (required by the HID-over-GATT profile)
 
 def start(name="grippy"):
     """Bring up BLE HID and begin advertising. Returns the Keyboard object."""
-    global _ble, _hid, _adv, _kbd, _di, _bat
+    global _ble, _hid, _adv, _kbd, _di, _bat, _last_adv
     import _bleio
     import adafruit_ble
     from adafruit_ble.advertising.standard import ProvideServicesAdvertisement
@@ -67,7 +75,7 @@ def start(name="grippy"):
     err = None                         # retry advertising through transient errors
     for _ in range(5):
         try:
-            _ble.start_advertising(_adv)
+            _ble.start_advertising(_adv, timeout=_ADV_TIMEOUT)
             err = None
             break
         except Exception as e:
@@ -75,6 +83,7 @@ def start(name="grippy"):
             time.sleep(0.3)
     if err:
         raise err
+    _last_adv = time.monotonic()
 
     _kbd = Keyboard(_hid.devices)
     return _kbd
@@ -83,10 +92,18 @@ def connected():
     return bool(_ble and _ble.connected)
 
 def poll():
-    """Re-advertise if the host dropped. Call from the main loop while active."""
+    """Re-advertise if the host dropped or the ad window lapsed. Call from the
+    main loop while active. Rate-limited so we don't hammer start_advertising
+    during the brief connect window (advertising stopped, not yet connected) —
+    the runaway pattern that exhausts NimBLE memory on builds without PR #11036."""
+    global _last_adv
     if _ble and _adv and not _ble.connected and not _ble.advertising:
+        now = time.monotonic()
+        if now - _last_adv < 3.0:
+            return
+        _last_adv = now
         try:
-            _ble.start_advertising(_adv)
+            _ble.start_advertising(_adv, timeout=_ADV_TIMEOUT)
         except Exception:
             pass
 
