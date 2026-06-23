@@ -11,6 +11,7 @@ import chords_config
 import webserver
 import notes
 import game
+import ble_hid
 
 time.sleep(0.25)
 displayio.release_displays()
@@ -19,6 +20,21 @@ displayio.release_displays()
 try:
     import wifi
     wifi.radio.enabled = False
+except Exception:
+    pass
+
+# --- BLE radio: on, but quiet, at boot ---
+# Keep the adapter ENABLED at boot so enabling BLE from the menu never has to
+# toggle adapter.enabled — flipping it right before advertising corrupts the
+# controller ("Unknown system firmware error"). Enabling once here, far from
+# advertising time, is safe. We just stop CircuitPython's own BLE-workflow
+# advertisement (CIRCUITPYxxxx) so the board isn't discoverable / auto-connected
+# until BLE is turned on from the menu.
+try:
+    import _bleio
+    _bleio.adapter.enabled = True
+    if _bleio.adapter.advertising:
+        _bleio.adapter.stop_advertising()
 except Exception:
     pass
 
@@ -77,12 +93,19 @@ for gp in SW_PINS:
     p.pull = digitalio.Pull.UP
     pins.append(p)
 
-# ─── USB HID setup (start OFF; keyboard only) ────────────────────────
+# ─── Keyboard output (start OFF) ─────────────────────────────────────
+# Two transports, one at a time: USB HID (`usbmode`, local `keyboard`) and
+# BLE HID (`blemode`, owned by ble_hid). _kbd() returns whichever is ready to
+# send (None if off, or BLE-on-but-not-yet-connected).
 usbmode = False
+blemode = False
 keyboard = None
+ble_err  = ""        # last BLE-enable error (shown on screen for debugging)
 
 def enable_hid():
     global usbmode, keyboard
+    if blemode:
+        disable_ble()            # one transport at a time
     import usb_hid
     from adafruit_hid.keyboard import Keyboard
     keyboard = Keyboard(usb_hid.devices)
@@ -94,6 +117,41 @@ def disable_hid():
     keyboard = None
     usbmode = False
     print("USB HID disabled")
+
+def enable_ble():
+    global blemode, ble_err
+    if usbmode:
+        disable_hid()            # one transport at a time
+    import gc
+    gc.collect()
+    print("BLE: free heap before start =", gc.mem_free())
+    try:
+        ble_hid.start("grippy")
+        blemode = True
+        ble_err = ""
+        print("BLE HID enabled (advertising as grippy)")
+    except Exception as e:
+        blemode = False          # never crash the device on a radio hiccup
+        ble_err = repr(e)
+        try:
+            ble_hid.stop()
+        except Exception:
+            pass
+        print("BLE enable FAILED:", ble_err)
+
+def disable_ble():
+    global blemode
+    ble_hid.stop()
+    blemode = False
+    print("BLE HID disabled")
+
+def _kbd():
+    """The keyboard ready to send right now, or None."""
+    if usbmode:
+        return keyboard
+    if blemode:
+        return ble_hid.kbd()     # None until a host connects
+    return None
 
 # ─── Timing constants ────────────────────────────────────────────────
 SCAN_LOOP = 0.001
@@ -149,7 +207,7 @@ typing_offset = 0
 # ─── Menu / sub-mode state ───────────────────────────────────────────
 # A note auto-saves on the long-hold back to the menu (the only way home),
 # so layer switches never commit and there's no separate Save item.
-_BASE_MENU = ["New Note", "View Note", "Game", "WiFi Sync", "Clr Note", "Clr All", "HID"]
+_BASE_MENU = ["New Note", "View Note", "WiFi Sync", "Clr Note", "Game Mode", "BLE", "HID", "Clr All"]
 menu_idx          = 0
 menu_top          = 0
 confirm_clear_all = False
@@ -330,6 +388,10 @@ def render_menu():
             name = items[i]
             if name == "HID":
                 name = "HID On" if usbmode else "HID Off"
+            elif name == "BLE":
+                # Off / advertising / connected, so you can see pairing succeed
+                name = ("BLE " + ("Con" if ble_hid.connected() else "Adv")
+                        ) if blemode else "BLE Off"
             elif name == "Clr All" and confirm_clear_all and i == menu_idx:
                 name = "Clr All?!"
             s = ((">" if i == menu_idx else " ") + name)[:COLS]
@@ -357,7 +419,7 @@ def menu_activate():
         render_typing_window()
     elif item == "View Note":
         enter_viewer()
-    elif item == "Game":
+    elif item == "Game Mode":
         enter_game()              # chord trainer
     elif item == "WiFi Sync":
         start_remote()            # screen off + WiFi up
@@ -377,6 +439,20 @@ def menu_activate():
         else:
             enable_hid()
         render_menu()
+    elif item == "BLE":
+        if blemode:
+            disable_ble()
+            render_menu()
+        else:
+            enable_ble()
+            if blemode:
+                render_menu()
+            else:
+                # enable failed — surface the error on screen (serial dies when
+                # the BLE adapter toggles, so this is the only way to read it)
+                _draw_lines(["BLE FAIL"] +
+                            [ble_err[i:i + COLS]
+                             for i in range(0, min(len(ble_err), COLS * 4), COLS)])
 
 def handle_menu_input(use):
     global menu_idx, confirm_clear_all
@@ -700,10 +776,12 @@ def check_chords():
             skip_scag = False
         else:
             use = pending_combo or last_combo
-            if layer == 5 and modifier_armed and last_combo in chords_config.alpha and usbmode:
+            if layer == 5 and modifier_armed and last_combo in chords_config.alpha and (usbmode or blemode):
                 key = chords_config.alpha[last_combo]
-                keyboard.press(held_modifier, key)
-                keyboard.release_all()
+                kb = _kbd()
+                if kb:
+                    kb.press(held_modifier, key)
+                    kb.release_all()
                 layer           = 2          # back to alpha to keep typing
                 thumb_taps      = 1          # 1 tap == alpha
                 modifier_armed  = False
@@ -713,9 +791,10 @@ def check_chords():
                 if use != (4,):
                     kc = lm.get(use)
                     if kc:
-                        if usbmode:
-                            keyboard.press(kc)
-                            keyboard.release_all()
+                        kb = _kbd()
+                        if kb:
+                            kb.press(kc)
+                            kb.release_all()
 
                         if kc == 42:  # Backspace — edit local buffer
                             if text_buffer:
@@ -748,8 +827,18 @@ def check_chords():
 render_menu()   # boot home = layer-1 menu
 _maybe_refresh_budgeted()
 
+_ble_was_connected = False
+
 while True:
     check_chords()
     webserver.poll()
+    if blemode:
+        ble_hid.poll()                       # re-advertise if the host dropped
+        c = ble_hid.connected()
+        if c != _ble_was_connected:          # connection state changed
+            _ble_was_connected = c
+            print("BLE connected" if c else "BLE advertising")
+            if layer == 1 and not (viewer_mode or clear_mode or game_mode):
+                render_menu()                # live Adv -> Con in the menu
     _maybe_refresh_budgeted()
     time.sleep(SCAN_LOOP)
