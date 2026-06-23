@@ -43,6 +43,19 @@ bl = digitalio.DigitalInOut(board.IO13)
 bl.direction = digitalio.Direction.OUTPUT
 bl.value = True
 
+# --- Onboard RGB LED off (case covers it; saves power) ---
+# CircuitPython drives the WS2812 on board.NEOPIXEL as a status LED. Drive it to
+# black with the built-in neopixel_write (no neopixel lib needed) and release the
+# pin. (The separate red power LED is hardwired to 3V3 — not software-controllable.)
+try:
+    import neopixel_write
+    _np = digitalio.DigitalInOut(board.NEOPIXEL)
+    _np.direction = digitalio.Direction.OUTPUT
+    neopixel_write.neopixel_write(_np, bytearray([0, 0, 0]))
+    _np.deinit()
+except Exception:
+    pass
+
 # --- SPI + 4-wire display bus ---
 spi = busio.SPI(clock=board.IO8, MOSI=board.IO9)   # no MISO required
 display_bus = FourWire(
