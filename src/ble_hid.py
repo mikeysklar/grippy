@@ -12,9 +12,11 @@
 #    local GATT and there's no clean teardown on _bleio. Recreating HIDService on
 #    every enable piles up duplicate services and HANGS the re-enable. So _build()
 #    runs a single time and start()/stop() just flip advertising + an _active flag.
-#  * NEVER disconnect(). connection.disconnect() hard-faults the board (CP
-#    #9708/#10849) — that was the "freeze" on toggling BLE off. We stop
-#    advertising and let the host drop the link.
+#  * DISCONNECT on stop(). On CP 10.3.0-alpha.2 connection.disconnect()
+#    hard-faulted the board (CP #9708/#10849) — the "freeze" on toggling BLE
+#    off — so we used to only stop advertising. The reset crash is fixed in
+#    this 10.3 main build (#11051, 227d938), so stop() now drops the link too;
+#    otherwise the host (macOS) keeps the keyboard connected after BLE is off.
 #  * NEVER toggle _bleio.adapter.enabled near advertising (firmware error / USB
 #    reset). The radio is enabled once at boot (code.py).
 #  * FINITE advertising timeout. NimBLE 6.0.1 rejects "advertise forever"
@@ -92,13 +94,28 @@ def start(name="grippy"):
     return _kbd
 
 def stop():
-    """Turn BLE output off: stop advertising and stop routing keystrokes. Keep
-    the GATT/radio built (re-enable just re-advertises) and never disconnect."""
+    """Turn BLE output off: stop advertising, drop any host link, and stop
+    routing keystrokes. Keep the GATT/radio built so re-enable just re-advertises.
+    Disconnecting makes the host (macOS) see the keyboard go away instead of
+    staying connected after BLE is toggled off."""
     global _active
     _active = False
     try:
         if _ble and _ble.advertising:
             _ble.stop_advertising()
+    except Exception:
+        pass
+    # Drop the live link(s) so the host releases the keyboard. disconnect() is
+    # async — the link drops a moment later — and hard-faulted on alpha.2 but is
+    # safe on this 10.3 main build (see header). With the BLE workflow disabled
+    # (boot.py) nothing re-advertises, so the host stays disconnected.
+    try:
+        if _ble:
+            for conn in _ble.connections:
+                try:
+                    conn.disconnect()
+                except Exception:
+                    pass
     except Exception:
         pass
     gc.collect()

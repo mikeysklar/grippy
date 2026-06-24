@@ -27,9 +27,19 @@ except Exception:
 # Keep the adapter ENABLED at boot so enabling BLE from the menu never has to
 # toggle adapter.enabled — flipping it right before advertising corrupts the
 # controller ("Unknown system firmware error"). Enabling once here, far from
-# advertising time, is safe. We just stop CircuitPython's own BLE-workflow
-# advertisement (CIRCUITPYxxxx) so the board isn't discoverable / auto-connected
-# until BLE is turned on from the menu.
+# advertising time, is safe.
+#
+# Disable CircuitPython's built-in BLE WORKFLOW. It auto-advertises as
+# CIRCUITPYxxxx and re-advertises on every disconnect, fighting ble_hid for the
+# single radio — that caused the stray "CIRCUITPYac58e" name, macOS staying
+# connected after BLE-off (workflow re-advertised → host reconnected), and the
+# flaky pairing. boot.py disables it before it ever starts on a hard reset; this
+# line covers soft resets (Ctrl-D), where boot.py does not run.
+try:
+    import supervisor
+    supervisor.runtime.ble_workflow = False
+except Exception:
+    pass
 try:
     import _bleio
     _bleio.adapter.enabled = True
