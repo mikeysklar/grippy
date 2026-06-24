@@ -27,9 +27,19 @@ except Exception:
 # Keep the adapter ENABLED at boot so enabling BLE from the menu never has to
 # toggle adapter.enabled — flipping it right before advertising corrupts the
 # controller ("Unknown system firmware error"). Enabling once here, far from
-# advertising time, is safe. We just stop CircuitPython's own BLE-workflow
-# advertisement (CIRCUITPYxxxx) so the board isn't discoverable / auto-connected
-# until BLE is turned on from the menu.
+# advertising time, is safe.
+#
+# Disable CircuitPython's built-in BLE WORKFLOW. It auto-advertises as
+# CIRCUITPYxxxx and re-advertises on every disconnect, fighting ble_hid for the
+# single radio — that caused the stray "CIRCUITPYac58e" name, macOS staying
+# connected after BLE-off (workflow re-advertised → host reconnected), and the
+# flaky pairing. boot.py disables it before it ever starts on a hard reset; this
+# line covers soft resets (Ctrl-D), where boot.py does not run.
+try:
+    import supervisor
+    supervisor.runtime.ble_workflow = False
+except Exception:
+    pass
 try:
     import _bleio
     _bleio.adapter.enabled = True
@@ -220,10 +230,11 @@ typing_offset = 0
 # ─── Menu / sub-mode state ───────────────────────────────────────────
 # A note auto-saves on the long-hold back to the menu (the only way home),
 # so layer switches never commit and there's no separate Save item.
-_BASE_MENU = ["New Note", "View Note", "WiFi Sync", "Clr Note", "Game Mode", "BLE", "HID", "Clr All"]
+_BASE_MENU = ["New Note", "View Note", "WiFi Sync", "Clr Note", "Game Mode", "BLE", "Clr BLE", "HID", "Clr All"]
 menu_idx          = 0
 menu_top          = 0
 confirm_clear_all = False
+confirm_clr_ble   = False     # "Clr BLE" two-tap confirm (erases BLE bonds)
 clear_mode        = False     # "Clr Note" picker active
 clear_idx         = 0
 clear_top         = 0
@@ -407,6 +418,8 @@ def render_menu():
                         ) if blemode else "BLE Off"
             elif name == "Clr All" and confirm_clear_all and i == menu_idx:
                 name = "Clr All?!"
+            elif name == "Clr BLE" and confirm_clr_ble and i == menu_idx:
+                name = "Clr BLE?!"
             s = ((">" if i == menu_idx else " ") + name)[:COLS]
         else:
             s = ""
@@ -420,10 +433,12 @@ def clear_all_notes():
 
 def menu_activate():
     """Run the highlighted menu item."""
-    global layer, thumb_taps, viewer_mode, confirm_clear_all, usbmode, typing_offset
+    global layer, thumb_taps, viewer_mode, confirm_clear_all, confirm_clr_ble, usbmode, typing_offset
     item = menu_items()[menu_idx]
     if item != "Clr All":
         confirm_clear_all = False
+    if item != "Clr BLE":
+        confirm_clr_ble = False
     if item == "New Note":
         viewer_mode = False
         typing_offset = 0
@@ -445,6 +460,18 @@ def menu_activate():
         else:
             confirm_clear_all = False
             clear_all_notes()
+            render_menu()
+    elif item == "Clr BLE":
+        # Wipe stored BLE bonds so a host can pair fresh (recovers macOS "stuck
+        # on pairing" from a stale on-device bond). Also Forget the device on the
+        # host. Two-tap confirm so it isn't triggered by accident.
+        if not confirm_clr_ble:
+            confirm_clr_ble = True
+            render_menu()         # shows "Clr BLE?!" — select again to erase
+        else:
+            confirm_clr_ble = False
+            ok = ble_hid.erase_pairing()
+            print("BLE bonds erased" if ok else "BLE erase failed")
             render_menu()
     elif item == "HID":
         if usbmode:
@@ -468,15 +495,17 @@ def menu_activate():
                              for i in range(0, min(len(ble_err), COLS * 4), COLS)])
 
 def handle_menu_input(use):
-    global menu_idx, confirm_clear_all
+    global menu_idx, confirm_clear_all, confirm_clr_ble
     n = len(menu_items())
     if use == (0,):
         menu_idx = (menu_idx - 1) % n
         confirm_clear_all = False
+        confirm_clr_ble = False
         render_menu()
     elif use == (3,):
         menu_idx = (menu_idx + 1) % n
         confirm_clear_all = False
+        confirm_clr_ble = False
         render_menu()
     elif use in ((1,), (2,), (1, 2)):
         menu_activate()
@@ -805,9 +834,15 @@ def check_chords():
                     kc = lm.get(use)
                     if kc:
                         kb = _kbd()
+                        if blemode:
+                            print("BLE type kc=%d kb=%s conn=%s" %
+                                  (kc, kb is not None, ble_hid.connected()))
                         if kb:
-                            kb.press(kc)
-                            kb.release_all()
+                            try:
+                                kb.press(kc)
+                                kb.release_all()
+                            except Exception as e:
+                                print("BLE send err:", repr(e))
 
                         if kc == 42:  # Backspace — edit local buffer
                             if text_buffer:
