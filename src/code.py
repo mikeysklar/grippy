@@ -179,6 +179,13 @@ def _kbd():
 
 # ─── Timing constants ────────────────────────────────────────────────
 SCAN_LOOP = 0.001
+# While the screen is OFF (local sleep or WiFi Sync) there is nothing to type,
+# so we don't need the 1 ms chord-scan cadence — spinning that fast keeps the
+# ESP32-S3 CPU out of idle and burns ~70 mA extra (measured: screen-off+WiFi
+# busy-spin 140 mA vs 70 mA when the CPU is allowed to idle). Poll at 20 Hz
+# instead: still wakes on a keypress / serves HTTP within 50 ms, but lets the
+# CPU idle so screen-off draw drops back to ~70 mA on the 130 mAh cell.
+SLEEP_LOOP = 0.05
 STABLE_MS_ALPHA = 0.03
 STABLE_MS_OTHER = 0.02
 DEBOUNCE_UP      = 0.05
@@ -890,4 +897,5 @@ while True:
             if layer == 1 and not (viewer_mode or clear_mode or game_mode):
                 render_menu()                # live Adv -> Con in the menu
     _maybe_refresh_budgeted()
-    time.sleep(SCAN_LOOP)
+    # Fast scan only while the screen is on (typing); idle the CPU when it's off.
+    time.sleep(SCAN_LOOP if bl.value else SLEEP_LOOP)
