@@ -1,3 +1,7 @@
 .DS_Store
 *.FCBak
 grippy/grippy-backups/
+
+# Python
+__pycache__/
+*.pyc
