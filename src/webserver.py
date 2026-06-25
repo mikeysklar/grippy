@@ -84,9 +84,16 @@ def start():
             raise RuntimeError("no IP after connect")
         print("Remote: connected", ip, "tx_power", wifi.radio.tx_power)
 
-        _mdns = mdns.Server(wifi.radio)
-        _mdns.hostname = "grippy"
-        _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
+        # mDNS (grippy.local) is a convenience — access by IP works without it.
+        # mdns.Server can only be created ONCE per boot, so a failed/again start
+        # must NOT abort the whole server (stop() deinits it; see below).
+        try:
+            _mdns = mdns.Server(wifi.radio)
+            _mdns.hostname = "grippy"
+            _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
+        except Exception as e:
+            print("Remote: mDNS skipped:", e)
+            _mdns = None
 
         _pool = socketpool.SocketPool(wifi.radio)
         sock = _pool.socket(_pool.AF_INET, _pool.SOCK_STREAM)
@@ -159,7 +166,15 @@ def stop():
         except Exception:
             pass
         _listen = None
-    _mdns = None
+    if _mdns is not None:
+        # Free the firmware mDNS instance — mdns.Server can only be created once
+        # per boot, so without deinit() the NEXT start() throws "mDNS already
+        # initialized" and WiFi Sync fails on every attempt after the first.
+        try:
+            _mdns.deinit()
+        except Exception:
+            pass
+        _mdns = None
     _pool = None
     try:
         import wifi
