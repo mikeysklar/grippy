@@ -1,0 +1,13 @@
+# settings.toml — intentionally minimal. DEVICE-LOCAL (not in the git repo).
+#
+# ⚠️ DO NOT add CIRCUITPY_WEB_API_PORT / CIRCUITPY_WEB_API_PASSWORD here.
+# CircuitPython's built-in WEB WORKFLOW server contends for the network stack
+# and port 80 once WiFi is up, which blocked all inbound traffic to grippy's own
+# notes server (board got an IP and could ping OUT, but nothing could reach it
+# IN — ping/curl from the LAN failed). Removing the web-workflow keys fixed it.
+# 2026-06-24.
+#
+# ⚠️ DO NOT put WiFi creds here either. CIRCUITPY_WIFI_SSID/PASSWORD would make
+# CircuitPython auto-connect at boot (backlight + association current spike =
+# brownout on the 130 mAh cell). grippy's WiFi creds live in /wifi.conf and are
+# read only when "WiFi Sync" is selected (screen already off).

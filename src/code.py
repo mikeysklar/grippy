@@ -23,13 +23,14 @@ try:
 except Exception:
     pass
 
-# --- BLE radio: on, but quiet, at boot ---
-# Keep the adapter ENABLED at boot so enabling BLE from the menu never has to
-# toggle adapter.enabled — flipping it right before advertising corrupts the
-# controller ("Unknown system firmware error"). Enabling once here, far from
-# advertising time, is safe.
+# --- BLE radio: OFF at boot (enabled on demand) ---
+# An enabled-but-idle BLE controller draws current on EVERY boot even when BLE
+# is never used. So leave the adapter OFF here and let ble_hid.start() power it
+# up the first time the BLE menu item is selected (with a settle delay before
+# advertising, so we still don't toggle adapter.enabled right next to a
+# start_advertising — the thing that used to corrupt the controller).
 #
-# Disable CircuitPython's built-in BLE WORKFLOW. It auto-advertises as
+# Still disable CircuitPython's built-in BLE WORKFLOW. It auto-advertises as
 # CIRCUITPYxxxx and re-advertises on every disconnect, fighting ble_hid for the
 # single radio — that caused the stray "CIRCUITPYac58e" name, macOS staying
 # connected after BLE-off (workflow re-advertised → host reconnected), and the
@@ -42,9 +43,9 @@ except Exception:
     pass
 try:
     import _bleio
-    _bleio.adapter.enabled = True
     if _bleio.adapter.advertising:
         _bleio.adapter.stop_advertising()
+    _bleio.adapter.enabled = False
 except Exception:
     pass
 

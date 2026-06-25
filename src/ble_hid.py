@@ -18,7 +18,9 @@
 #    this 10.3 main build (#11051, 227d938), so stop() now drops the link too;
 #    otherwise the host (macOS) keeps the keyboard connected after BLE is off.
 #  * NEVER toggle _bleio.adapter.enabled near advertising (firmware error / USB
-#    reset). The radio is enabled once at boot (code.py).
+#    reset). The radio is OFF at boot (saves current) and powered up ONCE here in
+#    start() via _enable_adapter(), with a settle delay before _build()/advertise
+#    — and left on for the rest of the session so this toggle happens at most once.
 #  * FINITE advertising timeout. NimBLE 6.0.1 rejects "advertise forever"
 #    (timeout None/0) with "Invalid BLE parameter" and caps the duration
 #    (~60-80s; 60 works, 90 fails). We advertise in 60s windows re-armed by poll().
@@ -70,6 +72,16 @@ def _build():
     _ble.name = "grippy"
     _kbd = Keyboard(_hid.devices)
 
+def _enable_adapter():
+    """Power up the BLE controller on demand (it's OFF at boot). Idempotent:
+    only toggles when currently off, and settles briefly so the enable isn't
+    right next to start_advertising (which used to corrupt the controller)."""
+    import _bleio
+    if not _bleio.adapter.enabled:
+        _bleio.adapter.enabled = True
+        time.sleep(0.2)
+
+
 def _advertise():
     if _ble.advertising or _ble.connected:
         return
@@ -87,6 +99,7 @@ def _advertise():
 def start(name="grippy"):
     """Turn BLE output on: build (once), advertise, and route keystrokes."""
     global _active, _last_adv
+    _enable_adapter()   # radio is off at boot — power it up before building/adv
     _build()
     _active = True
     _advertise()
@@ -147,6 +160,9 @@ def erase_pairing():
     pairing' when the board holds a stale bond). Safe to call with BLE off."""
     try:
         import _bleio
+        if not _bleio.adapter.enabled:
+            _bleio.adapter.enabled = True   # adapter is off at boot; need it on
+            time.sleep(0.2)
         _bleio.adapter.erase_bonding()
         return True
     except Exception:
