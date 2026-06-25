@@ -9,12 +9,21 @@
 # brown out the 130 mAh cell. start() never touches the screen, so screen-off
 # ordering lives entirely in the caller. On failure start() returns False so
 # the caller can turn the screen back on.
+#
+# ⚠️ HEAP: this serves a single static text file over a RAW socket on purpose.
+# adafruit_httpserver costs ~25 KB to import, which on-device (display + app
+# resident) left only ~12 KB free — too little for the lwIP stack to allocate
+# packet buffers, so the board got an IP but answered ping/HTTP only slowly or
+# not at all. socketpool/mdns/wifi are firmware built-ins (~0 heap), so the raw
+# server keeps ~25 KB more free and the network stack stays healthy.
 
 import time
 
 _active = False
-_server = None
+_listen = None
 _mdns = None
+_pool = None
+_buf = bytearray(512)   # preallocated request scratch — no per-request alloc
 
 
 def _load_wifi_conf(path="/wifi.conf"):
@@ -41,7 +50,7 @@ def start():
     """WiFi up → serve notes.txt at grippy.local. Returns True on success.
 
     Caller MUST kill the backlight first (see brownout contract above)."""
-    global _active, _server, _mdns
+    global _active, _listen, _mdns, _pool
 
     ssid, pw = _load_wifi_conf()
     if not ssid:
@@ -51,7 +60,6 @@ def start():
     import wifi
     import socketpool
     import mdns
-    from adafruit_httpserver import Server, Response
     try:
         # Clean radio cycle before connect — a half-open radio throws
         # "Unknown failure 2". Off → settle → on → settle, then connect.
@@ -76,26 +84,28 @@ def start():
             raise RuntimeError("no IP after connect")
         print("Remote: connected", ip, "tx_power", wifi.radio.tx_power)
 
-        _mdns = mdns.Server(wifi.radio)
-        _mdns.hostname = "grippy"
-        _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
+        # mDNS (grippy.local) is a convenience — access by IP works without it.
+        # mdns.Server can only be created ONCE per boot, so a failed/again start
+        # must NOT abort the whole server (stop() deinits it; see below).
+        try:
+            _mdns = mdns.Server(wifi.radio)
+            _mdns.hostname = "grippy"
+            _mdns.advertise_service(service_type="_http", protocol="_tcp", port=80)
+        except Exception as e:
+            print("Remote: mDNS skipped:", e)
+            _mdns = None
 
-        pool = socketpool.SocketPool(wifi.radio)
-        srv = Server(pool, "/", debug=False)
+        _pool = socketpool.SocketPool(wifi.radio)
+        sock = _pool.socket(_pool.AF_INET, _pool.SOCK_STREAM)
+        try:
+            sock.setsockopt(_pool.SOL_SOCKET, _pool.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+        sock.bind((ip, 80))
+        sock.listen(1)
+        sock.settimeout(0)            # non-blocking accept; poll() never stalls
+        _listen = sock
 
-        def _serve_notes(request):
-            try:
-                with open("/notes.txt") as f:
-                    data = f.read()
-            except OSError:
-                data = ""
-            return Response(request, data, content_type="text/plain")
-
-        srv.route("/")(_serve_notes)
-        srv.route("/notes.txt")(_serve_notes)
-
-        srv.start(ip, port=80)
-        _server = srv
         _active = True
         try:
             import gc
@@ -110,17 +120,62 @@ def start():
         return False
 
 
-def stop():
-    """Tear down server + WiFi. Does NOT touch the screen."""
-    global _active, _server, _mdns
-    _active = False
-    if _server is not None:
+def _read_notes():
+    try:
+        with open("/notes.txt") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _handle(conn):
+    """Read (and discard) the request, then send notes.txt. Best-effort."""
+    try:
+        conn.settimeout(1)
         try:
-            _server.stop()
+            conn.recv_into(_buf)      # drain the request line/headers
         except Exception:
             pass
-        _server = None
-    _mdns = None
+        body = _read_notes().encode("utf-8")
+        hdr = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n" % len(body)
+        ).encode("utf-8")
+        conn.send(hdr)
+        if body:
+            conn.send(body)
+    except Exception as e:
+        print("server send err:", e)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def stop():
+    """Tear down server + WiFi. Does NOT touch the screen."""
+    global _active, _listen, _mdns, _pool
+    _active = False
+    if _listen is not None:
+        try:
+            _listen.close()
+        except Exception:
+            pass
+        _listen = None
+    if _mdns is not None:
+        # Free the firmware mDNS instance — mdns.Server can only be created once
+        # per boot, so without deinit() the NEXT start() throws "mDNS already
+        # initialized" and WiFi Sync fails on every attempt after the first.
+        try:
+            _mdns.deinit()
+        except Exception:
+            pass
+        _mdns = None
+    _pool = None
     try:
         import wifi
         wifi.radio.enabled = False
@@ -134,12 +189,17 @@ def stop():
 
 
 def poll():
-    """Service one round of HTTP requests; no-op when not active."""
-    if _active and _server is not None:
-        try:
-            _server.poll()
-        except Exception as e:
-            print("server poll err:", e)
+    """Accept + serve at most one pending request; no-op when not active."""
+    if not (_active and _listen is not None):
+        return
+    try:
+        conn, _addr = _listen.accept()
+    except OSError:
+        return                        # nothing pending (non-blocking timeout)
+    except Exception as e:
+        print("server accept err:", e)
+        return
+    _handle(conn)
 
 
 def active():
