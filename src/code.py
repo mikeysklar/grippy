@@ -284,6 +284,33 @@ def _format_window_lines(s: str):
     s = s + " " * max(0, win - len(s))
     return [s[i:i+COLS] for i in range(0, win, COLS)]
 
+def _wrap_lines(s: str, cols: int = COLS):
+    """Word-wrap s into rows of <= cols chars, breaking on spaces so whole
+    words drop to the next row instead of splitting (used by View mode).
+    Honors explicit newlines; a word longer than cols is hard-split since it
+    can never fit. Whitespace runs collapse to a single space."""
+    out = []
+    for para in s.split("\n"):
+        words = para.split()
+        if not words:
+            out.append("")          # preserve blank lines / paragraph breaks
+            continue
+        line = ""
+        for w in words:
+            while len(w) > cols:    # too long to ever fit a row: hard-split
+                if line:
+                    out.append(line); line = ""
+                out.append(w[:cols]); w = w[cols:]
+            if not line:
+                line = w
+            elif len(line) + 1 + len(w) <= cols:
+                line += " " + w
+            else:
+                out.append(line); line = w
+        if line:
+            out.append(line)
+    return out
+
 # ─── Budgeted manual refresh ─────────────────────────────────────────
 USE_NS = hasattr(time, "monotonic_ns")
 _now = (time.monotonic_ns if USE_NS else lambda: int(time.monotonic()*1_000_000_000))
@@ -343,13 +370,13 @@ def render_entry_window():
         if d: NEEDS_REFRESH = True
         return
     s = entries[entry_idx]
-    max_off = max(0, len(s) - (COLS*ROWS))
+    wrapped = _wrap_lines(s, COLS)          # break on spaces, no mid-word splits
+    max_off = max(0, len(wrapped) - ROWS)
     start = max(0, min(entry_offset, max_off))
-    window = s[start:start+(COLS*ROWS)]
-    lines = _format_window_lines(window)
+    view = wrapped[start:start+ROWS]
     d = False
-    for r, t in enumerate(lines):
-        d |= _set_line(r, t)
+    for r in range(ROWS):
+        d |= _set_line(r, view[r] if r < len(view) else "")
     if d: NEEDS_REFRESH = True
 
 def enter_viewer():
