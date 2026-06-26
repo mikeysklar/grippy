@@ -5,3 +5,7 @@ grippy/grippy-backups/
 # Python
 __pycache__/
 *.pyc
+
+# editor swap files
+*.swp
+*.swo
